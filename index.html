@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Camera Video Recorder</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Multi-Camera Video Recorder</h1>
+            <p>Record multiple video inputs into a single grid layout</p>
+        </header>
+
+        <div class="controls">
+            <div class="controls-row">
+                <div class="control-group">
+                    <label for="cameraCount">Number of Cameras:</label>
+                    <select id="cameraCount">
+                        <option value="1">1 Camera</option>
+                        <option value="2">2 Cameras</option>
+                        <option value="4" selected>4 Cameras</option>
+                        <option value="6">6 Cameras</option>
+                        <option value="9">9 Cameras</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="timerOverlay">
+                        <input type="checkbox" id="timerOverlay" checked>
+                        Show Timer Overlay
+                    </label>
+                </div>
+                <div class="control-group">
+                    <label for="filenamePrefix">Filename Prefix:</label>
+                    <input type="text" id="filenamePrefix" placeholder="Optional prefix">
+                </div>
+            </div>
+            <div class="controls-row">
+                <button id="setupCameras" class="btn btn-primary">Setup Cameras</button>
+                <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
+                <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
+                <div class="recording-indicator" id="recordingIndicator">
+                    <span class="dot"></span> Recording
+                </div>
+            </div>
+        </div>
+
+        <div class="camera-selection" id="cameraSelection"></div>
+
+        <div class="preview-section">
+            <h2>Live Preview</h2>
+            <div class="preview-container">
+                <div id="videoGrid" class="video-grid"></div>
+                <canvas id="previewCanvas" class="preview-canvas"></canvas>
+            </div>
+        </div>
+
+        <div class="info">
+            <p id="statusText">Click "Setup Cameras" to begin</p>
+            <p id="recordingTime"></p>
+        </div>
+        
+        <canvas id="outputCanvas" style="display: none;"></canvas>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
