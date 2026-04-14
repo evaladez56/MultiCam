@@ -4,6 +4,9 @@ class MultiCameraRecorder {
         this.videoElements = [];
         this.mediaRecorder = null;
         this.recordedChunks = [];
+        this.individualRecorders = [];
+        this.individualChunks = [];
+        this.individualCheckboxes = [];
         this.canvas = document.getElementById('outputCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.previewCanvas = document.getElementById('previewCanvas');
@@ -169,11 +172,28 @@ class MultiCameraRecorder {
                 label.className = 'video-label';
                 label.textContent = deviceIdSuffix ? `Camera ${i + 1} (...${deviceIdSuffix})` : `Camera ${i + 1}`;
                 
+                const checkboxContainer = document.createElement('div');
+                checkboxContainer.className = 'individual-record-checkbox';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `record-individual-${i}`;
+                checkbox.checked = false;
+                
+                const checkboxLabel = document.createElement('label');
+                checkboxLabel.htmlFor = `record-individual-${i}`;
+                checkboxLabel.textContent = 'Record Separately';
+                
+                checkboxContainer.appendChild(checkbox);
+                checkboxContainer.appendChild(checkboxLabel);
+                
                 videoContainer.appendChild(video);
                 videoContainer.appendChild(label);
+                videoContainer.appendChild(checkboxContainer);
                 this.videoGrid.appendChild(videoContainer);
                 
                 this.videoElements.push(video);
+                this.individualCheckboxes.push(checkbox);
                 
             } catch (error) {
                 console.error(`Error accessing camera ${i + 1}:`, error);
@@ -329,10 +349,18 @@ class MultiCameraRecorder {
         }
         
         this.recordedChunks = [];
+        this.individualRecorders = [];
+        this.individualChunks = [];
         this.isRecording = true;
         this.startTime = Date.now();
         
         this.drawVideoGrid();
+        
+        this.individualCheckboxes.forEach((checkbox, index) => {
+            if (checkbox.checked && this.streams[index]) {
+                this.startIndividualRecording(index);
+            }
+        });
         
         const canvasStream = this.canvas.captureStream(30);
         
@@ -388,6 +416,52 @@ class MultiCameraRecorder {
         }
     }
 
+    startIndividualRecording(index) {
+        const stream = this.streams[index];
+        if (!stream) return;
+        
+        const options = {
+            mimeType: 'video/mp4',
+            videoBitsPerSecond: 5000000
+        };
+        
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'video/webm;codecs=h264,opus';
+        }
+        
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'video/webm;codecs=vp9,opus';
+        }
+        
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'video/webm';
+        }
+        
+        try {
+            const recorder = new MediaRecorder(stream, options);
+            const chunks = [];
+            
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    chunks.push(event.data);
+                }
+            };
+            
+            recorder.onstop = () => {
+                this.saveIndividualRecording(chunks, index, recorder.mimeType);
+            };
+            
+            recorder.start(100);
+            
+            this.individualRecorders.push({ recorder, index });
+            this.individualChunks.push(chunks);
+            
+            console.log(`Started individual recording for Camera ${index + 1}`);
+        } catch (error) {
+            console.error(`Error starting individual recording for Camera ${index + 1}:`, error);
+        }
+    }
+
     stopRecording() {
         if (!this.isRecording) return;
         
@@ -401,9 +475,20 @@ class MultiCameraRecorder {
             this.mediaRecorder.stop();
         }
         
+        this.individualRecorders.forEach(({ recorder }) => {
+            if (recorder && recorder.state !== 'inactive') {
+                recorder.stop();
+            }
+        });
+        
         this.stopTimer();
         
-        this.updateStatus('Recording stopped. Processing video...');
+        const individualCount = this.individualRecorders.length;
+        const message = individualCount > 0 
+            ? `Recording stopped. Processing ${individualCount + 1} video(s)...`
+            : 'Recording stopped. Processing video...';
+        this.updateStatus(message);
+        
         this.startButton.disabled = false;
         this.stopButton.disabled = true;
         this.setupButton.disabled = false;
@@ -448,6 +533,42 @@ class MultiCameraRecorder {
         this.recordedChunks = [];
     }
 
+    saveIndividualRecording(chunks, cameraIndex, mimeType) {
+        if (chunks.length === 0) {
+            console.warn(`No data for individual camera ${cameraIndex + 1}`);
+            return;
+        }
+        
+        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        const blob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        
+        const now = new Date();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const year = now.getFullYear();
+        
+        const prefix = this.filenamePrefixInput.value.trim();
+        const baseFilename = `camera${cameraIndex + 1}_${month}_${day}_${year}`;
+        const filename = prefix ? `${prefix}_${baseFilename}` : baseFilename;
+        
+        a.download = `${filename}.${extension}`;
+        
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+        
+        console.log(`Individual recording saved for Camera ${cameraIndex + 1}: ${filename}.${extension} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+    }
+
     startTimer() {
         this.timerInterval = setInterval(() => {
             const elapsed = Date.now() - this.startTime;
@@ -483,6 +604,9 @@ class MultiCameraRecorder {
         });
         this.streams = [];
         this.videoElements = [];
+        this.individualCheckboxes = [];
+        this.individualRecorders = [];
+        this.individualChunks = [];
         this.videoGrid.innerHTML = '';
         
         if (this.animationFrameId) {

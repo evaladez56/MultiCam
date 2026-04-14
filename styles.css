@@ -299,6 +299,34 @@ input[type="text"]:focus {
     font-weight: 600;
 }
 
+.individual-record-checkbox {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.individual-record-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #48bb78;
+}
+
+.individual-record-checkbox label {
+    cursor: pointer;
+    margin: 0;
+    font-weight: 500;
+}
+
 .info {
     text-align: center;
     padding: 20px;
