@@ -75,9 +75,12 @@ class MultiCameraRecorder {
             return;
         }
 
-        this.updateStatus(`Found ${cameras.length} camera(s). Setting up ${cameraCount} stream(s)...`);
+        this.updateStatus(`Found ${cameras.length} camera(s). Initializing ${cameraCount} stream(s)...`);
         
+        // Build the dropdowns (so the user can swap cameras later if needed)
+        // and then immediately initialize the streams in one step.
         this.createCameraSelectionUI(cameras, cameraCount);
+        await this.initializeCameras(cameraCount);
     }
 
     createCameraSelectionUI(cameras, cameraCount) {
@@ -123,14 +126,6 @@ class MultiCameraRecorder {
         }
         
         this.cameraSelection.appendChild(container);
-        
-        const startButton = document.createElement('button');
-        startButton.className = 'btn btn-secondary';
-        startButton.textContent = 'Initialize Selected Cameras';
-        startButton.style.marginTop = '15px';
-        startButton.addEventListener('click', () => this.initializeCameras(cameraCount));
-        
-        this.cameraSelection.appendChild(startButton);
     }
 
     async initializeCameras(cameraCount) {

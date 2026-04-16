@@ -8,62 +8,117 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Multi-Camera Video Recorder</h1>
-            <p>Record multiple video inputs into a single grid layout</p>
-        </header>
 
-        <div class="controls">
-            <div class="controls-row">
-                <div class="control-group">
-                    <label for="cameraCount">Number of Cameras:</label>
-                    <select id="cameraCount">
-                        <option value="1">1 Camera</option>
-                        <option value="2">2 Cameras</option>
-                        <option value="4" selected>4 Cameras</option>
-                        <option value="6">6 Cameras</option>
-                        <option value="9">9 Cameras</option>
-                    </select>
+        <!-- RECORDER VIEW -->
+        <div id="recorderView" class="view">
+            <header>
+                <h1>Multi-Camera Video Recorder</h1>
+                <p>Record multiple video inputs into a single grid layout</p>
+            </header>
+
+            <div class="controls">
+                <div class="controls-row">
+                    <div class="control-group">
+                        <label for="cameraCount">Number of Cameras:</label>
+                        <select id="cameraCount">
+                            <option value="1">1 Camera</option>
+                            <option value="2">2 Cameras</option>
+                            <option value="4" selected>4 Cameras</option>
+                            <option value="6">6 Cameras</option>
+                            <option value="9">9 Cameras</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="timerOverlay">
+                            <input type="checkbox" id="timerOverlay" checked>
+                            Show Timer Overlay
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="filenamePrefix">Filename Prefix:</label>
+                        <input type="text" id="filenamePrefix" placeholder="Optional prefix">
+                    </div>
                 </div>
-                <div class="control-group">
-                    <label for="timerOverlay">
-                        <input type="checkbox" id="timerOverlay" checked>
-                        Show Timer Overlay
-                    </label>
-                </div>
-                <div class="control-group">
-                    <label for="filenamePrefix">Filename Prefix:</label>
-                    <input type="text" id="filenamePrefix" placeholder="Optional prefix">
+                <div class="controls-row">
+                    <button id="setupCameras" class="btn btn-primary">Start Cameras</button>
+                    <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
+                    <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
+                    <div class="recording-indicator" id="recordingIndicator">
+                        <span class="dot"></span> Recording
+                    </div>
                 </div>
             </div>
-            <div class="controls-row">
-                <button id="setupCameras" class="btn btn-primary">Setup Cameras</button>
-                <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
-                <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
-                <div class="recording-indicator" id="recordingIndicator">
-                    <span class="dot"></span> Recording
+
+            <div class="camera-selection" id="cameraSelection"></div>
+
+            <div class="preview-section">
+                <h2>Live Preview</h2>
+                <div class="preview-container">
+                    <div id="videoGrid" class="video-grid"></div>
+                    <canvas id="previewCanvas" class="preview-canvas"></canvas>
                 </div>
+            </div>
+
+            <div class="info">
+                <p id="statusText">Click "Start Cameras" to begin</p>
+                <p id="recordingTime"></p>
+            </div>
+
+            <canvas id="outputCanvas" style="display: none;"></canvas>
+
+            <div class="view-switch">
+                <button id="switchToCompare" class="btn btn-secondary">Switch to Comparison Workspace &rarr;</button>
             </div>
         </div>
 
-        <div class="camera-selection" id="cameraSelection"></div>
+        <!-- COMPARISON VIEW -->
+        <div id="compareView" class="view" style="display: none;">
+            <header>
+                <h1>Comparison Workspace</h1>
+                <p>Load 2&ndash;4 videos, align their start points, and play them together</p>
+            </header>
 
-        <div class="preview-section">
-            <h2>Live Preview</h2>
-            <div class="preview-container">
-                <div id="videoGrid" class="video-grid"></div>
-                <canvas id="previewCanvas" class="preview-canvas"></canvas>
+            <div class="controls">
+                <div class="controls-row">
+                    <div class="control-group">
+                        <label for="compareCount">Number of Videos:</label>
+                        <select id="compareCount">
+                            <option value="2">2 Videos</option>
+                            <option value="3">3 Videos</option>
+                            <option value="4" selected>4 Videos</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="controls-row">
+                    <button id="comparePlayAll" class="btn btn-success" disabled>Play All</button>
+                    <button id="comparePauseAll" class="btn btn-danger" disabled>Pause All</button>
+                    <button id="compareRewindAll" class="btn btn-secondary" disabled>Rewind to Start</button>
+                </div>
+                <div class="controls-row">
+                    <div class="control-group" style="flex: 1;">
+                        <label for="compareMasterSeek" style="min-width: 60px;">Seek:</label>
+                        <input type="range" id="compareMasterSeek" min="0" max="1000" value="0" step="1" style="flex: 1;" disabled>
+                        <span id="compareMasterTime" style="min-width: 120px; text-align: right; font-variant-numeric: tabular-nums;">0:00 / 0:00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="compare-grid-wrapper">
+                <div id="compareGrid" class="compare-grid compare-grid-4"></div>
+            </div>
+
+            <div class="info">
+                <p id="compareStatus">Select the number of videos to begin.</p>
+            </div>
+
+            <div class="view-switch">
+                <button id="switchToRecorder" class="btn btn-secondary">&larr; Back to Recorder</button>
             </div>
         </div>
 
-        <div class="info">
-            <p id="statusText">Click "Setup Cameras" to begin</p>
-            <p id="recordingTime"></p>
-        </div>
-        
-        <canvas id="outputCanvas" style="display: none;"></canvas>
     </div>
 
     <script src="app.js"></script>
+    <script src="compare.js"></script>
 </body>
 </html>
