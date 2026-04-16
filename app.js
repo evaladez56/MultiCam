@@ -278,13 +278,40 @@ class MultiCameraRecorder {
                 
                 const x = col * this.gridLayout.cellWidth;
                 const y = row * this.gridLayout.cellHeight;
+                const cellW = this.gridLayout.cellWidth;
+                const cellH = this.gridLayout.cellHeight;
                 
-                this.ctx.drawImage(
-                    video,
-                    x, y,
-                    this.gridLayout.cellWidth,
-                    this.gridLayout.cellHeight
-                );
+                // Preserve aspect ratio (object-fit: cover) by cropping the source
+                const srcW = video.videoWidth;
+                const srcH = video.videoHeight;
+                
+                if (srcW > 0 && srcH > 0) {
+                    const srcAspect = srcW / srcH;
+                    const cellAspect = cellW / cellH;
+                    
+                    let sx, sy, sWidth, sHeight;
+                    if (srcAspect > cellAspect) {
+                        // Source is wider than cell — crop left/right
+                        sHeight = srcH;
+                        sWidth = srcH * cellAspect;
+                        sx = (srcW - sWidth) / 2;
+                        sy = 0;
+                    } else {
+                        // Source is taller than cell — crop top/bottom
+                        sWidth = srcW;
+                        sHeight = srcW / cellAspect;
+                        sx = 0;
+                        sy = (srcH - sHeight) / 2;
+                    }
+                    
+                    this.ctx.drawImage(
+                        video,
+                        sx, sy, sWidth, sHeight,
+                        x, y, cellW, cellH
+                    );
+                } else {
+                    this.ctx.drawImage(video, x, y, cellW, cellH);
+                }
                 
                 this.drawCameraLabel(this.ctx, `Camera ${index + 1}`, x, y, this.canvas.width);
             }
