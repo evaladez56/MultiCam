@@ -522,8 +522,25 @@ class MultiCameraRecorder {
     }
 
     startIndividualRecording(index) {
-        const stream = this.streams[index];
-        if (!stream) return;
+        const videoStream = this.streams[index];
+        if (!videoStream) return;
+        
+        const combinedStream = new MediaStream();
+        videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+        
+        if (this.audioContext && this.audioContext.state !== 'closed') {
+            const destination = this.audioContext.createMediaStreamDestination();
+            
+            this.audioStreams.forEach(stream => {
+                const source = this.audioContext.createMediaStreamSource(stream);
+                source.connect(destination);
+            });
+            
+            const audioTrack = destination.stream.getAudioTracks()[0];
+            if (audioTrack) {
+                combinedStream.addTrack(audioTrack);
+            }
+        }
         
         const options = {
             mimeType: 'video/mp4',
@@ -543,7 +560,7 @@ class MultiCameraRecorder {
         }
         
         try {
-            const recorder = new MediaRecorder(stream, options);
+            const recorder = new MediaRecorder(combinedStream, options);
             const chunks = [];
             
             recorder.ondataavailable = (event) => {
