@@ -2,6 +2,8 @@ class MultiCameraRecorder {
     constructor() {
         this.streams = [];
         this.videoElements = [];
+        this.audioStreams = [];
+        this.audioToggles = [];
         this.mediaRecorder = null;
         this.recordedChunks = [];
         this.individualRecorders = [];
@@ -64,26 +66,44 @@ class MultiCameraRecorder {
         }
     }
 
+    async getAvailableAudioDevices() {
+        try {
+            await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioDevices = devices.filter(device => device.kind === 'audioinput');
+            
+            console.log('Found audio devices:', audioDevices.map(a => ({ 
+                label: a.label, 
+                id: a.deviceId ? a.deviceId.slice(-4) : 'none'
+            })));
+            
+            return audioDevices;
+        } catch (error) {
+            console.error('Error getting audio devices:', error);
+            return [];
+        }
+    }
+
     async setupCameras() {
         this.cleanup();
         
         const cameraCount = parseInt(this.cameraCountSelect.value);
         const cameras = await this.getAvailableCameras();
+        const audioDevices = await this.getAvailableAudioDevices();
         
         if (cameras.length === 0) {
             this.updateStatus('No cameras found. Please connect a camera and try again.');
             return;
         }
 
-        this.updateStatus(`Found ${cameras.length} camera(s). Initializing ${cameraCount} stream(s)...`);
+        this.updateStatus(`Found ${cameras.length} camera(s) and ${audioDevices.length} audio device(s). Setting up...`);
         
-        // Build the dropdowns (so the user can swap cameras later if needed)
-        // and then immediately initialize the streams in one step.
-        this.createCameraSelectionUI(cameras, cameraCount);
+        this.createCameraSelectionUI(cameras, cameraCount, audioDevices);
         await this.initializeCameras(cameraCount);
     }
 
-    createCameraSelectionUI(cameras, cameraCount) {
+    createCameraSelectionUI(cameras, cameraCount, audioDevices) {
         this.cameraSelection.innerHTML = '';
         
         const container = document.createElement('div');
@@ -126,6 +146,44 @@ class MultiCameraRecorder {
         }
         
         this.cameraSelection.appendChild(container);
+        
+        if (audioDevices.length > 0) {
+            const audioSection = document.createElement('div');
+            audioSection.className = 'audio-select-section';
+            
+            const audioTitle = document.createElement('h3');
+            audioTitle.textContent = 'Audio Inputs';
+            audioSection.appendChild(audioTitle);
+            
+            const audioContainer = document.createElement('div');
+            audioContainer.className = 'audio-select-group';
+            
+            audioDevices.forEach((device, index) => {
+                const audioItem = document.createElement('div');
+                audioItem.className = 'audio-select-item';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `audio-${index}`;
+                checkbox.value = device.deviceId;
+                checkbox.checked = index === 0;
+                
+                const label = document.createElement('label');
+                label.htmlFor = `audio-${index}`;
+                const deviceIdSuffix = device.deviceId.slice(-4);
+                const deviceName = device.label || `Audio Device ${index + 1}`;
+                label.textContent = `${deviceName} (...${deviceIdSuffix})`;
+                
+                audioItem.appendChild(checkbox);
+                audioItem.appendChild(label);
+                audioContainer.appendChild(audioItem);
+                
+                this.audioToggles.push(checkbox);
+            });
+            
+            audioSection.appendChild(audioContainer);
+            this.cameraSelection.appendChild(audioSection);
+        }
     }
 
     async initializeCameras(cameraCount) {
@@ -145,7 +203,7 @@ class MultiCameraRecorder {
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     },
-                    audio: i === 0
+                    audio: false
                 };
                 
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -201,6 +259,21 @@ class MultiCameraRecorder {
                 this.videoGrid.appendChild(videoContainer);
             }
         }
+        
+        this.audioToggles.forEach(async (toggle, index) => {
+            if (toggle.checked) {
+                try {
+                    const audioStream = await navigator.mediaDevices.getUserMedia({
+                        audio: { deviceId: { exact: toggle.value } },
+                        video: false
+                    });
+                    this.audioStreams.push(audioStream);
+                    console.log(`Initialized audio device ${index + 1}`);
+                } catch (error) {
+                    console.error(`Error accessing audio device ${index + 1}:`, error);
+                }
+            }
+        });
         
         this.setupCanvas(cameraCount);
         this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
@@ -386,9 +459,19 @@ class MultiCameraRecorder {
         
         const canvasStream = this.canvas.captureStream(30);
         
-        if (this.streams[0].getAudioTracks().length > 0) {
-            const audioTrack = this.streams[0].getAudioTracks()[0];
-            canvasStream.addTrack(audioTrack);
+        if (this.audioStreams.length > 0) {
+            const audioContext = new AudioContext();
+            const destination = audioContext.createMediaStreamDestination();
+            
+            this.audioStreams.forEach(stream => {
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(destination);
+            });
+            
+            const mixedAudioTrack = destination.stream.getAudioTracks()[0];
+            canvasStream.addTrack(mixedAudioTrack);
+            
+            this.audioContext = audioContext;
         }
         
         const options = {
@@ -625,6 +708,18 @@ class MultiCameraRecorder {
             stream.getTracks().forEach(track => track.stop());
         });
         this.streams = [];
+        
+        this.audioStreams.forEach(stream => {
+            stream.getTracks().forEach(track => track.stop());
+        });
+        this.audioStreams = [];
+        this.audioToggles = [];
+        
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+        
         this.videoElements = [];
         this.individualCheckboxes = [];
         this.individualRecorders = [];

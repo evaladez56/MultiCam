@@ -226,6 +226,53 @@ input[type="text"]:focus {
     width: 100%;
 }
 
+.audio-select-section {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid #e0e0e0;
+}
+
+.audio-select-section h3 {
+    color: #444;
+    font-size: 1.2rem;
+    margin-bottom: 15px;
+}
+
+.audio-select-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+}
+
+.audio-select-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.audio-select-item:hover {
+    background: #e9ecef;
+}
+
+.audio-select-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #48bb78;
+}
+
+.audio-select-item label {
+    cursor: pointer;
+    font-weight: 500;
+    color: #555;
+    flex: 1;
+}
+
 .preview-section {
     margin-bottom: 30px;
 }
