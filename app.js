@@ -260,7 +260,7 @@ class MultiCameraRecorder {
             }
         }
         
-        this.audioToggles.forEach(async (toggle, index) => {
+        const audioPromises = this.audioToggles.map(async (toggle, index) => {
             if (toggle.checked) {
                 try {
                     const audioStream = await navigator.mediaDevices.getUserMedia({
@@ -268,12 +268,16 @@ class MultiCameraRecorder {
                         video: false
                     });
                     this.audioStreams.push(audioStream);
-                    console.log(`Initialized audio device ${index + 1}`);
+                    console.log(`Initialized audio device ${index + 1}:`, audioStream.getAudioTracks()[0].label);
                 } catch (error) {
                     console.error(`Error accessing audio device ${index + 1}:`, error);
                 }
             }
         });
+        
+        await Promise.all(audioPromises);
+        
+        console.log(`Total audio streams initialized: ${this.audioStreams.length}`);
         
         this.setupCanvas(cameraCount);
         this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
@@ -460,18 +464,23 @@ class MultiCameraRecorder {
         const canvasStream = this.canvas.captureStream(30);
         
         if (this.audioStreams.length > 0) {
+            console.log(`Mixing ${this.audioStreams.length} audio stream(s)`);
             const audioContext = new AudioContext();
             const destination = audioContext.createMediaStreamDestination();
             
-            this.audioStreams.forEach(stream => {
+            this.audioStreams.forEach((stream, idx) => {
                 const source = audioContext.createMediaStreamSource(stream);
                 source.connect(destination);
+                console.log(`Connected audio source ${idx + 1}:`, stream.getAudioTracks()[0].label);
             });
             
-            const mixedAudioTrack = destination.stream.getAudioTracks()[0];
-            canvasStream.addTrack(mixedAudioTrack);
+            this.mixedAudioTrack = destination.stream.getAudioTracks()[0];
+            canvasStream.addTrack(this.mixedAudioTrack);
+            console.log('Mixed audio track added to recording');
             
             this.audioContext = audioContext;
+        } else {
+            console.warn('No audio streams available for recording');
         }
         
         const options = {
@@ -528,18 +537,8 @@ class MultiCameraRecorder {
         const combinedStream = new MediaStream();
         videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
         
-        if (this.audioContext && this.audioContext.state !== 'closed') {
-            const destination = this.audioContext.createMediaStreamDestination();
-            
-            this.audioStreams.forEach(stream => {
-                const source = this.audioContext.createMediaStreamSource(stream);
-                source.connect(destination);
-            });
-            
-            const audioTrack = destination.stream.getAudioTracks()[0];
-            if (audioTrack) {
-                combinedStream.addTrack(audioTrack);
-            }
+        if (this.mixedAudioTrack) {
+            combinedStream.addTrack(this.mixedAudioTrack);
         }
         
         const options = {
