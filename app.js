@@ -104,6 +104,7 @@ class MultiCameraRecorder {
     }
 
     createCameraSelectionUI(cameras, cameraCount, audioDevices) {
+        this.audioToggles = [];
         this.cameraSelection.innerHTML = '';
         
         const container = document.createElement('div');
@@ -729,7 +730,6 @@ class MultiCameraRecorder {
             stream.getTracks().forEach(track => track.stop());
         });
         this.audioStreams = [];
-        this.audioToggles = [];
         
         if (this.audioContext) {
             this.audioContext.close();
