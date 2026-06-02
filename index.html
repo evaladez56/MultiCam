@@ -18,6 +18,7 @@
 
             <div class="controls">
                 <div class="controls-row">
+                    <button id="setupCameras" class="btn btn-primary">Start Cameras</button>
                     <div class="control-group">
                         <label for="cameraCount">Number of Cameras:</label>
                         <select id="cameraCount">
@@ -39,17 +40,17 @@
                         <input type="text" id="filenamePrefix" placeholder="Optional prefix">
                     </div>
                 </div>
-                <div class="controls-row">
-                    <button id="setupCameras" class="btn btn-primary">Start Cameras</button>
-                    <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
-                    <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
-                    <div class="recording-indicator" id="recordingIndicator">
-                        <span class="dot"></span> Recording
-                    </div>
-                </div>
             </div>
 
             <div class="camera-selection" id="cameraSelection"></div>
+
+            <div class="recording-controls">
+                <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
+                <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
+                <div class="recording-indicator" id="recordingIndicator">
+                    <span class="dot"></span> Recording
+                </div>
+            </div>
 
             <div class="preview-section">
                 <h2>Live Preview</h2>

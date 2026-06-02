@@ -273,6 +273,17 @@ input[type="text"]:focus {
     flex: 1;
 }
 
+.recording-controls {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    margin-bottom: 30px;
+}
+
 .preview-section {
     margin-bottom: 30px;
 }
