@@ -86,6 +86,9 @@ class MultiCameraRecorder {
     }
 
     async setupCameras() {
+        this.setupButton.disabled = true;
+        this.startButton.disabled = true;
+        
         this.cleanup();
         
         const cameraCount = parseInt(this.cameraCountSelect.value);
@@ -94,6 +97,7 @@ class MultiCameraRecorder {
         
         if (cameras.length === 0) {
             this.updateStatus('No cameras found. Please connect a camera and try again.');
+            this.setupButton.disabled = false;
             return;
         }
 
@@ -101,6 +105,7 @@ class MultiCameraRecorder {
         
         this.createCameraSelectionUI(cameras, cameraCount, audioDevices);
         await this.initializeCameras(cameraCount);
+        this.setupButton.disabled = false;
     }
 
     createCameraSelectionUI(cameras, cameraCount, audioDevices) {
@@ -456,12 +461,6 @@ class MultiCameraRecorder {
         
         this.drawVideoGrid();
         
-        this.individualCheckboxes.forEach((checkbox, index) => {
-            if (checkbox.checked && this.streams[index]) {
-                this.startIndividualRecording(index);
-            }
-        });
-        
         const canvasStream = this.canvas.captureStream(30);
         
         if (this.audioStreams.length > 0) {
@@ -483,6 +482,12 @@ class MultiCameraRecorder {
         } else {
             console.warn('No audio streams available for recording');
         }
+        
+        this.individualCheckboxes.forEach((checkbox, index) => {
+            if (checkbox.checked && this.streams[index]) {
+                this.startIndividualRecording(index);
+            }
+        });
         
         const options = {
             mimeType: 'video/mp4',
