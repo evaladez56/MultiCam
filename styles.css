@@ -284,6 +284,22 @@ input[type="text"]:focus {
     margin-bottom: 30px;
 }
 
+.split-timer-controls {
+    display: flex;
+    gap: 9px;
+    justify-content: center;
+    padding: 9px 12px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+.split-timer-controls .btn {
+    font-size: 0.6rem;
+    padding: 5px 9px;
+    border-radius: 4px;
+}
+
 .preview-section {
     margin-bottom: 30px;
 }

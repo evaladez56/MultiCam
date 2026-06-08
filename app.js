@@ -14,11 +14,19 @@ class MultiCameraRecorder {
         this.previewCanvas = document.getElementById('previewCanvas');
         this.previewCtx = this.previewCanvas.getContext('2d');
         this.isRecording = false;
+        this.isPaused = false;
         this.isPreviewing = false;
         this.animationFrameId = null;
         this.previewAnimationId = null;
         this.startTime = null;
+        this.pausedAt = null;
+        this.totalPausedMs = 0;
         this.timerInterval = null;
+        this.activeSplitTimer = null;
+        this.splitTimerStartedAt = null;
+        this.machineTimeMs = 0;
+        this.manualTimeMs = 0;
+        this.resumeOverlayStart = null;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -30,6 +38,7 @@ class MultiCameraRecorder {
         this.filenamePrefixInput = document.getElementById('filenamePrefix');
         this.setupButton = document.getElementById('setupCameras');
         this.startButton = document.getElementById('startRecording');
+        this.pauseButton = document.getElementById('pauseRecording');
         this.stopButton = document.getElementById('stopRecording');
         this.videoGrid = document.getElementById('videoGrid');
         this.previewContainer = document.querySelector('.preview-container');
@@ -37,12 +46,18 @@ class MultiCameraRecorder {
         this.statusText = document.getElementById('statusText');
         this.recordingIndicator = document.getElementById('recordingIndicator');
         this.recordingTime = document.getElementById('recordingTime');
+        this.splitTimerControls = document.getElementById('splitTimerControls');
+        this.machineTimeBtn = document.getElementById('machineTimeBtn');
+        this.manualTimeBtn = document.getElementById('manualTimeBtn');
     }
 
     attachEventListeners() {
         this.setupButton.addEventListener('click', () => this.setupCameras());
         this.startButton.addEventListener('click', () => this.startRecording());
+        this.pauseButton.addEventListener('click', () => this.togglePauseRecording());
         this.stopButton.addEventListener('click', () => this.stopRecording());
+        this.machineTimeBtn.addEventListener('click', () => this.toggleSplitTimer('machine'));
+        this.manualTimeBtn.addEventListener('click', () => this.toggleSplitTimer('manual'));
     }
 
     async getAvailableCameras() {
@@ -340,6 +355,11 @@ class MultiCameraRecorder {
             this.drawTimerOverlay(this.previewCtx, this.previewCanvas.width, this.previewCanvas.height);
         }
         
+        if (this.isRecording) {
+            this.drawSplitTimerOverlays(this.previewCtx, this.previewCanvas.width, this.previewCanvas.height);
+            this.drawResumeOverlay(this.previewCtx, this.previewCanvas.width, this.previewCanvas.height);
+        }
+        
         this.previewAnimationId = requestAnimationFrame(() => this.drawPreview());
     }
 
@@ -399,6 +419,9 @@ class MultiCameraRecorder {
             this.drawTimerOverlay(this.ctx, this.canvas.width, this.canvas.height);
         }
         
+        this.drawSplitTimerOverlays(this.ctx, this.canvas.width, this.canvas.height);
+        this.drawResumeOverlay(this.ctx, this.canvas.width, this.canvas.height);
+        
         this.animationFrameId = requestAnimationFrame(() => this.drawVideoGrid());
     }
 
@@ -418,7 +441,8 @@ class MultiCameraRecorder {
     }
 
     drawTimerOverlay(ctx, canvasWidth, canvasHeight) {
-        const elapsed = Date.now() - this.startTime;
+        const pauseOffset = this.totalPausedMs + (this.isPaused ? Date.now() - this.pausedAt : 0);
+        const elapsed = Date.now() - this.startTime - pauseOffset;
         const totalSeconds = Math.floor(elapsed / 1000);
         const hours = Math.floor(totalSeconds / 3600);
         const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -457,6 +481,9 @@ class MultiCameraRecorder {
         this.individualRecorders = [];
         this.individualChunks = [];
         this.isRecording = true;
+        this.isPaused = false;
+        this.totalPausedMs = 0;
+        this.pausedAt = null;
         this.startTime = Date.now();
         
         this.drawVideoGrid();
@@ -523,6 +550,7 @@ class MultiCameraRecorder {
             
             this.updateStatus('Recording in progress...');
             this.startButton.disabled = true;
+            this.pauseButton.disabled = false;
             this.stopButton.disabled = false;
             this.setupButton.disabled = true;
             this.recordingIndicator.classList.add('active');
@@ -617,9 +645,166 @@ class MultiCameraRecorder {
         this.updateStatus(message);
         
         this.startButton.disabled = false;
+        this.pauseButton.disabled = true;
+        this.pauseButton.textContent = 'Pause Recording';
         this.stopButton.disabled = true;
         this.setupButton.disabled = false;
         this.recordingIndicator.classList.remove('active');
+        this.isPaused = false;
+        this.activeSplitTimer = null;
+        this.splitTimerStartedAt = null;
+        this.machineTimeMs = 0;
+        this.manualTimeMs = 0;
+        this.updateSplitTimerButtons();
+    }
+
+    togglePauseRecording() {
+        if (!this.isRecording) return;
+        
+        if (!this.isPaused) {
+            this.mediaRecorder.pause();
+            this.individualRecorders.forEach(({ recorder }) => {
+                if (recorder && recorder.state === 'recording') recorder.pause();
+            });
+            this.isPaused = true;
+            this.pausedAt = Date.now();
+            this.pauseButton.textContent = 'Resume Recording';
+            this.recordingIndicator.classList.remove('active');
+            this.stopTimer();
+            if (this.activeSplitTimer) {
+                const now = Date.now();
+                if (this.activeSplitTimer === 'machine') this.machineTimeMs += now - this.splitTimerStartedAt;
+                else this.manualTimeMs += now - this.splitTimerStartedAt;
+                this.splitTimerStartedAt = null;
+            }
+            this.updateStatus('Recording paused. Click Resume to continue.');
+        } else {
+            this.totalPausedMs += Date.now() - this.pausedAt;
+            this.pausedAt = null;
+            this.mediaRecorder.resume();
+            this.individualRecorders.forEach(({ recorder }) => {
+                if (recorder && recorder.state === 'paused') recorder.resume();
+            });
+            this.isPaused = false;
+            this.pauseButton.textContent = 'Pause Recording';
+            this.recordingIndicator.classList.add('active');
+            if (this.activeSplitTimer) {
+                this.splitTimerStartedAt = Date.now();
+            }
+            this.resumeOverlayStart = Date.now();
+            this.startTimer();
+            this.updateStatus('Recording in progress...');
+        }
+    }
+
+    drawResumeOverlay(ctx, canvasWidth, canvasHeight) {
+        if (!this.resumeOverlayStart) return;
+        const elapsed = Date.now() - this.resumeOverlayStart;
+        const duration = 1000;
+        if (elapsed >= duration) {
+            this.resumeOverlayStart = null;
+            return;
+        }
+        const alpha = 1 - elapsed / duration;
+        const scale = canvasWidth / 1920;
+        const fontSize = 64 * scale;
+        ctx.font = `bold ${fontSize}px Arial`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        const text = 'Resumed from pause';
+        const textWidth = ctx.measureText(text).width;
+        const padX = 40 * scale;
+        const padY = 24 * scale;
+        const boxW = textWidth + padX * 2;
+        const boxH = fontSize + padY * 2;
+        const boxX = (canvasWidth - boxW) / 2;
+        const boxY = (canvasHeight - boxH) / 2;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'left';
+    }
+
+    toggleSplitTimer(type) {
+        const now = Date.now();
+        if (this.activeSplitTimer === type) {
+            if (type === 'machine') this.machineTimeMs += now - this.splitTimerStartedAt;
+            else this.manualTimeMs += now - this.splitTimerStartedAt;
+            this.activeSplitTimer = null;
+            this.splitTimerStartedAt = null;
+        } else {
+            if (this.activeSplitTimer === 'machine') this.machineTimeMs += now - this.splitTimerStartedAt;
+            else if (this.activeSplitTimer === 'manual') this.manualTimeMs += now - this.splitTimerStartedAt;
+            this.activeSplitTimer = type;
+            this.splitTimerStartedAt = now;
+        }
+        this.updateSplitTimerButtons();
+    }
+
+    updateSplitTimerButtons() {
+        const machineRunning = this.activeSplitTimer === 'machine';
+        const manualRunning = this.activeSplitTimer === 'manual';
+        this.machineTimeBtn.textContent = machineRunning ? 'Stop Machine Time' : 'Start Machine Time';
+        this.machineTimeBtn.className = machineRunning ? 'btn btn-success' : 'btn btn-secondary';
+        this.manualTimeBtn.textContent = manualRunning ? 'Stop Manual Time' : 'Start Manual Time';
+        this.manualTimeBtn.className = manualRunning ? 'btn btn-success' : 'btn btn-secondary';
+    }
+
+    getSplitTimerElapsed(type) {
+        const base = type === 'machine' ? this.machineTimeMs : this.manualTimeMs;
+        if (this.activeSplitTimer === type && this.splitTimerStartedAt !== null) {
+            return base + (Date.now() - this.splitTimerStartedAt);
+        }
+        return base;
+    }
+
+    drawSplitTimerOverlays(ctx, canvasWidth, canvasHeight) {
+        const hasMachine = this.machineTimeMs > 0 || this.activeSplitTimer === 'machine';
+        const hasManual = this.manualTimeMs > 0 || this.activeSplitTimer === 'manual';
+        if (!hasMachine && !hasManual) return;
+
+        const scale = canvasWidth / 1920;
+        const fontSize = 36 * scale;
+        const padding = 20 * scale;
+        const lineHeight = fontSize + padding;
+        const boxHeight = fontSize + padding;
+        const marginLeft = 20 * scale;
+
+        const formatMs = (ms) => {
+            const totalSeconds = Math.floor(ms / 1000);
+            const h = Math.floor(totalSeconds / 3600);
+            const m = Math.floor((totalSeconds % 3600) / 60);
+            const s = totalSeconds % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+
+        const entries = [];
+        if (hasMachine) entries.push({ label: 'Machine Time', elapsed: this.getSplitTimerElapsed('machine'), running: this.activeSplitTimer === 'machine' });
+        if (hasManual)  entries.push({ label: 'Manual Time',  elapsed: this.getSplitTimerElapsed('manual'),  running: this.activeSplitTimer === 'manual' });
+
+        const totalHeight = entries.length * (boxHeight + 8 * scale) - 8 * scale;
+        let startY = canvasHeight - totalHeight - 20 * scale;
+
+        ctx.font = `bold ${fontSize}px Arial`;
+
+        entries.forEach(({ label, elapsed, running }) => {
+            const timeStr = formatMs(elapsed);
+            const fullText = `${label}  ${timeStr}`;
+            const textWidth = ctx.measureText(fullText).width;
+            const boxWidth = textWidth + padding * 2;
+
+            ctx.fillStyle = running ? 'rgba(72, 187, 120, 0.85)' : 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(marginLeft, startY, boxWidth, boxHeight);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textBaseline = 'top';
+            ctx.fillText(fullText, marginLeft + padding, startY + (boxHeight - fontSize) / 2);
+
+            startY += boxHeight + 8 * scale;
+        });
     }
 
     saveRecording() {
@@ -698,7 +883,7 @@ class MultiCameraRecorder {
 
     startTimer() {
         this.timerInterval = setInterval(() => {
-            const elapsed = Date.now() - this.startTime;
+            const elapsed = Date.now() - this.startTime - this.totalPausedMs;
             const seconds = Math.floor(elapsed / 1000);
             const minutes = Math.floor(seconds / 60);
             const hours = Math.floor(minutes / 60);

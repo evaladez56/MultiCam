@@ -46,6 +46,7 @@
 
             <div class="recording-controls">
                 <button id="startRecording" class="btn btn-success" disabled>Start Recording</button>
+                <button id="pauseRecording" class="btn btn-secondary" disabled>Pause Recording</button>
                 <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
                 <div class="recording-indicator" id="recordingIndicator">
                     <span class="dot"></span> Recording
@@ -58,6 +59,11 @@
                     <div id="videoGrid" class="video-grid"></div>
                     <canvas id="previewCanvas" class="preview-canvas"></canvas>
                 </div>
+            </div>
+
+            <div class="split-timer-controls" id="splitTimerControls">
+                <button id="machineTimeBtn" class="btn btn-secondary">Start Machine Time</button>
+                <button id="manualTimeBtn" class="btn btn-secondary">Start Manual Time</button>
             </div>
 
             <div class="info">
