@@ -18,6 +18,148 @@ body {
     border-radius: 16px;
     padding: 30px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    position: relative;
+}
+
+/* ============================================= */
+/* Info button & modal                            */
+/* ============================================= */
+.info-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid #667eea;
+    background: white;
+    color: #667eea;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    z-index: 20;
+    line-height: 1;
+}
+
+.info-btn:hover {
+    background: #667eea;
+    color: white;
+    transform: scale(1.1);
+}
+
+.info-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.info-modal {
+    background: white;
+    border-radius: 16px;
+    padding: 32px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.info-modal h2 {
+    margin-bottom: 16px;
+    color: #333;
+    font-size: 1.5rem;
+}
+
+.info-modal h3 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    color: #444;
+    font-size: 1.15rem;
+}
+
+.info-modal ol {
+    padding-left: 20px;
+    margin-bottom: 10px;
+}
+
+.info-modal ol li {
+    margin-bottom: 8px;
+    color: #555;
+    line-height: 1.5;
+}
+
+.info-modal ol li ul {
+    margin-top: 6px;
+    margin-bottom: 4px;
+    padding-left: 20px;
+    list-style: disc;
+}
+
+.info-modal ol li ul li {
+    font-size: 0.85rem;
+    color: #777;
+    margin-bottom: 4px;
+}
+
+.info-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #999;
+    line-height: 1;
+    padding: 4px;
+    transition: color 0.2s;
+}
+
+.info-modal-close:hover {
+    color: #333;
+}
+
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+}
+
+.info-table th,
+.info-table td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.info-table th {
+    background: #f7fafc;
+    color: #4a5568;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.info-table td {
+    color: #555;
+}
+
+.info-tip {
+    margin-top: 8px;
+    color: #667eea;
+    font-size: 0.9rem;
+    font-weight: 600;
 }
 
 header {

@@ -27,6 +27,9 @@ class MultiCameraRecorder {
         this.machineTimeMs = 0;
         this.manualTimeMs = 0;
         this.resumeOverlayStart = null;
+        this.wavRecorder = null;
+        this.wavBuffers = [];
+        this.wavSampleRate = 48000;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -533,6 +536,10 @@ class MultiCameraRecorder {
             options.mimeType = 'video/webm';
         }
         
+        if (this.audioContext && this.audioStreams.length > 0) {
+            this.startWavRecording();
+        }
+        
         try {
             this.mediaRecorder = new MediaRecorder(canvasStream, options);
             
@@ -629,6 +636,8 @@ class MultiCameraRecorder {
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
             this.mediaRecorder.stop();
         }
+        
+        this.stopWavRecording();
         
         this.individualRecorders.forEach(({ recorder }) => {
             if (recorder && recorder.state !== 'inactive') {
@@ -814,14 +823,8 @@ class MultiCameraRecorder {
         }
         
         const mimeType = this.mediaRecorder.mimeType;
-        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        
         const blob = new Blob(this.recordedChunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
         
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
         const now = new Date();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
@@ -831,17 +834,19 @@ class MultiCameraRecorder {
         const baseFilename = `multicam_${month}_${day}_${year}`;
         const filename = prefix ? `${prefix}_${baseFilename}` : baseFilename;
         
-        a.download = `${filename}.${extension}`;
+        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        this.downloadBlob(blob, `${filename}.${extension}`);
         
-        document.body.appendChild(a);
-        a.click();
+        if (this.wavBuffers.length > 0) {
+            const wavBlob = this.encodeWav();
+            this.downloadBlob(wavBlob, `${filename}_audio.wav`);
+            const videoMB = (blob.size / 1024 / 1024).toFixed(2);
+            const audioMB = (wavBlob.size / 1024 / 1024).toFixed(2);
+            this.updateStatus(`Recording saved! ${filename}.${extension} (${videoMB} MB) + ${filename}_audio.wav (${audioMB} MB)`);
+        } else {
+            this.updateStatus(`Recording saved! (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+        }
         
-        setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }, 100);
-        
-        this.updateStatus(`Recording saved! (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
         this.recordedChunks = [];
     }
 
@@ -851,13 +856,7 @@ class MultiCameraRecorder {
             return;
         }
         
-        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
         const blob = new Blob(chunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
         
         const now = new Date();
         const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -868,17 +867,126 @@ class MultiCameraRecorder {
         const baseFilename = `camera${cameraIndex + 1}_${month}_${day}_${year}`;
         const filename = prefix ? `${prefix}_${baseFilename}` : baseFilename;
         
-        a.download = `${filename}.${extension}`;
+        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        this.downloadBlob(blob, `${filename}.${extension}`);
         
+        if (this.wavBuffers.length > 0) {
+            const wavBlob = this.encodeWav();
+            this.downloadBlob(wavBlob, `${filename}_audio.wav`);
+            console.log(`Camera ${cameraIndex + 1} saved: ${filename}.${extension} + ${filename}_audio.wav`);
+        } else {
+            console.log(`Individual recording saved for Camera ${cameraIndex + 1}: ${filename}.${extension} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+        }
+    }
+
+    downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
-        
         setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }, 100);
+    }
+
+    startWavRecording() {
+        this.wavBuffers = [];
+        this.wavSampleRate = this.audioContext.sampleRate;
         
-        console.log(`Individual recording saved for Camera ${cameraIndex + 1}: ${filename}.${extension} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+        const mixedStream = new MediaStream([this.mixedAudioTrack]);
+        const source = this.audioContext.createMediaStreamSource(mixedStream);
+        const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        
+        processor.onaudioprocess = (e) => {
+            if (this.isRecording && !this.isPaused) {
+                const inputData = e.inputBuffer.getChannelData(0);
+                this.wavBuffers.push(new Float32Array(inputData));
+            }
+        };
+        
+        source.connect(processor);
+        processor.connect(this.audioContext.destination);
+        
+        this.wavRecorder = { source, processor };
+        console.log(`WAV recording started (${this.wavSampleRate} Hz)`);
+    }
+
+    stopWavRecording() {
+        if (this.wavRecorder) {
+            this.wavRecorder.processor.disconnect();
+            this.wavRecorder.source.disconnect();
+            this.wavRecorder = null;
+        }
+    }
+
+    encodeWav() {
+        const totalLength = this.wavBuffers.reduce((sum, buf) => sum + buf.length, 0);
+        const pcmData = new Float32Array(totalLength);
+        let offset = 0;
+        for (const buf of this.wavBuffers) {
+            pcmData.set(buf, offset);
+            offset += buf.length;
+        }
+        
+        const numChannels = 1;
+        const bitsPerSample = 16;
+        const byteRate = this.wavSampleRate * numChannels * (bitsPerSample / 8);
+        const blockAlign = numChannels * (bitsPerSample / 8);
+        const dataSize = pcmData.length * (bitsPerSample / 8);
+        const buffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buffer);
+        
+        const writeString = (offset, str) => {
+            for (let i = 0; i < str.length; i++) {
+                view.setUint8(offset + i, str.charCodeAt(i));
+            }
+        };
+        
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, this.wavSampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeString(36, 'data');
+        view.setUint32(40, dataSize, true);
+        
+        let writeOffset = 44;
+        for (let i = 0; i < pcmData.length; i++) {
+            const sample = Math.max(-1, Math.min(1, pcmData[i]));
+            view.setInt16(writeOffset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            writeOffset += 2;
+        }
+        
+        return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    saveWebmWithWav(videoBlob, filename, label) {
+        const displayLabel = label || 'recording';
+        
+        this.downloadBlob(videoBlob, `${filename}.webm`);
+        
+        if (this.wavBuffers.length > 0) {
+            const wavBlob = this.encodeWav();
+            this.downloadBlob(wavBlob, `${filename}_audio.wav`);
+            const videoMB = (videoBlob.size / 1024 / 1024).toFixed(2);
+            const audioMB = (wavBlob.size / 1024 / 1024).toFixed(2);
+            const msg = `${displayLabel} saved: ${filename}.webm (${videoMB} MB) + ${filename}_audio.wav (${audioMB} MB). Import both into Premiere Pro and sync.`;
+            this.updateStatus(msg);
+            console.log(msg);
+        } else {
+            const videoMB = (videoBlob.size / 1024 / 1024).toFixed(2);
+            this.updateStatus(`${displayLabel} saved: ${filename}.webm (${videoMB} MB). No separate audio recorded.`);
+        }
     }
 
     startTimer() {

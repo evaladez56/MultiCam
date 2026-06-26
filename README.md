@@ -35,17 +35,17 @@ A web-based application that allows you to record multiple video inputs simultan
 
 4. **Stop Recording**
    - Click "Stop Recording" when finished
-   - The video will automatically download to your default downloads folder
-   - File format: MP4 (or WebM if MP4 not supported by browser)
+   - If your browser supports MP4 recording (Chrome 114+, Edge): downloads a single MP4 file with AAC audio
+   - If your browser falls back to WebM (Firefox): downloads a WebM video + a separate WAV audio file for Premiere Pro compatibility
 
 ## Technical Details
 
 - **Resolution**: 1920x1080 (Full HD)
 - **Frame Rate**: 30 FPS
 - **Video Codec**: H.264 (fallback to VP9/VP8 if not supported)
-- **Audio Codec**: Opus
+- **Audio Codec**: AAC (native MP4) or separate WAV file (WebM fallback)
 - **Bitrate**: 5 Mbps
-- **Format**: MP4 (or WebM as fallback)
+- **Format**: MP4 preferred; WebM + WAV as fallback
 
 ## Browser Compatibility
 
@@ -59,6 +59,12 @@ A web-based application that allows you to record multiple video inputs simultan
 - Modern web browser with WebRTC support
 - Multiple cameras/webcams connected to your computer
 - Camera and microphone permissions granted
+- Python (for the local web server)
+
+## Setup
+
+1. Run `start-server.bat` (or `python -m http.server 8000`)
+2. Open http://localhost:8000 in your browser
 
 ## Grid Layouts
 

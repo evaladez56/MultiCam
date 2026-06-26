@@ -9,6 +9,44 @@
 <body>
     <div class="container">
 
+        <button id="infoBtn" class="info-btn" title="How to use">?</button>
+
+        <div id="infoModal" class="info-modal-overlay" style="display: none;">
+            <div class="info-modal">
+                <button id="infoModalClose" class="info-modal-close">&times;</button>
+                <h2>How to Use</h2>
+                <ol>
+                    <li><strong>Setup</strong> &mdash; Choose the number of cameras, then click <em>Start Cameras</em>. Select which camera and audio inputs to use.
+                        <ul>
+                            <li><strong>Individual Cameras</strong> &mdash; Check <em>Record Separately</em> on any camera to also save its solo feed.</li>
+                            <li><strong>Timer &amp; Split Timers</strong> &mdash; Enable the timer overlay to burn elapsed time into the video. Use Machine/Manual time buttons to track split durations.</li>
+                        </ul>
+                    </li>
+                    <li><strong>Record</strong> &mdash; Click <em>Start Recording</em>. All camera feeds are combined into a single grid video. Use <em>Pause</em> and <em>Resume</em> as needed.</li>
+                    <li><strong>Stop &amp; Save</strong> &mdash; Click <em>Stop Recording</em>. Your file downloads automatically.</li>
+                </ol>
+                <h3>Output File Types</h3>
+                <table class="info-table">
+                    <thead>
+                        <tr><th>Browser</th><th>Video File</th><th>Audio File</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Chrome 114+ / Edge</td>
+                            <td><strong>.mp4</strong></td>
+                            <td rowspan="2"><strong>.wav</strong> &mdash; always included as a separate download for Premiere Pro compatibility</td>
+                        </tr>
+                        <tr>
+                            <td>Firefox / Older</td>
+                            <td><strong>.webm</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="info-tip">A separate WAV audio file always downloads alongside your video, ensuring Premiere Pro compatibility regardless of browser.</p>
+                <p class="info-tip">For playback, we recommend using <a href="https://www.videolan.org/" target="_blank" rel="noopener">VLC Media Player</a> — it supports all video and audio formats out of the box.</p>
+            </div>
+        </div>
+
         <!-- RECORDER VIEW -->
         <div id="recorderView" class="view">
             <header>
@@ -127,5 +165,15 @@
 
     <script src="app.js"></script>
     <script src="compare.js"></script>
+    <script>
+        (function() {
+            const btn = document.getElementById('infoBtn');
+            const modal = document.getElementById('infoModal');
+            const closeBtn = document.getElementById('infoModalClose');
+            btn.addEventListener('click', () => { modal.style.display = 'flex'; });
+            closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+            modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+        })();
+    </script>
 </body>
 </html>
