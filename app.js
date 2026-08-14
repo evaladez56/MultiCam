@@ -210,7 +210,13 @@ class MultiCameraRecorder {
         }
     }
 
+    getCameraSelects(cameraCount) {
+        return Array.from({ length: cameraCount }, (_, i) => document.getElementById(`camera-${i}`)).filter(Boolean);
+    }
+
     async initializeCameras(cameraCount) {
+        const selects = this.getCameraSelects(cameraCount);
+        selects.forEach(s => s.disabled = true);
         this.cleanup();
         this.updateStatus('Initializing cameras...');
         
@@ -306,6 +312,7 @@ class MultiCameraRecorder {
         this.setupCanvas(cameraCount);
         this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
         this.startButton.disabled = false;
+        this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
         this.startPreview();
     }
 

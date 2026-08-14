@@ -16,7 +16,7 @@
                 <button id="infoModalClose" class="info-modal-close">&times;</button>
                 <h2>How to Use</h2>
                 <ol>
-                    <li><strong>Setup</strong> &mdash; Choose the number of cameras, then click <em>Start Cameras</em>. Select which camera and audio inputs to use.
+                    <li><strong>Setup</strong> &mdash; Choose the number of cameras, then click <em>Initialize Cameras</em>. Select which camera and audio inputs to use.
                         <ul>
                             <li><strong>Individual Cameras</strong> &mdash; Check <em>Record Separately</em> on any camera to also save its solo feed.</li>
                             <li><strong>Timer &amp; Split Timers</strong> &mdash; Enable the timer overlay to burn elapsed time into the video. Use Machine/Manual time buttons to track split durations.</li>
@@ -56,7 +56,7 @@
 
             <div class="controls">
                 <div class="controls-row">
-                    <button id="setupCameras" class="btn btn-primary">Start Cameras</button>
+                    <button id="setupCameras" class="btn btn-primary">Initialize Cameras</button>
                     <div class="control-group">
                         <label for="cameraCount">Number of Cameras:</label>
                         <select id="cameraCount">
@@ -105,66 +105,16 @@
             </div>
 
             <div class="info">
-                <p id="statusText">Click "Start Cameras" to begin</p>
+                <p id="statusText">Click "Initialize Cameras" to begin</p>
                 <p id="recordingTime"></p>
             </div>
 
             <canvas id="outputCanvas" style="display: none;"></canvas>
-
-            <div class="view-switch">
-                <button id="switchToCompare" class="btn btn-secondary">Switch to Comparison Workspace &rarr;</button>
-            </div>
-        </div>
-
-        <!-- COMPARISON VIEW -->
-        <div id="compareView" class="view" style="display: none;">
-            <header>
-                <h1>Comparison Workspace</h1>
-                <p>Load 2&ndash;4 videos, align their start points, and play them together</p>
-            </header>
-
-            <div class="controls">
-                <div class="controls-row">
-                    <div class="control-group">
-                        <label for="compareCount">Number of Videos:</label>
-                        <select id="compareCount">
-                            <option value="2">2 Videos</option>
-                            <option value="3">3 Videos</option>
-                            <option value="4" selected>4 Videos</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="controls-row">
-                    <button id="comparePlayAll" class="btn btn-success" disabled>Play All</button>
-                    <button id="comparePauseAll" class="btn btn-danger" disabled>Pause All</button>
-                    <button id="compareRewindAll" class="btn btn-secondary" disabled>Rewind to Start</button>
-                </div>
-                <div class="controls-row">
-                    <div class="control-group" style="flex: 1;">
-                        <label for="compareMasterSeek" style="min-width: 60px;">Seek:</label>
-                        <input type="range" id="compareMasterSeek" min="0" max="1000" value="0" step="1" style="flex: 1;" disabled>
-                        <span id="compareMasterTime" style="min-width: 120px; text-align: right; font-variant-numeric: tabular-nums;">0:00 / 0:00</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="compare-grid-wrapper">
-                <div id="compareGrid" class="compare-grid compare-grid-4"></div>
-            </div>
-
-            <div class="info">
-                <p id="compareStatus">Select the number of videos to begin.</p>
-            </div>
-
-            <div class="view-switch">
-                <button id="switchToRecorder" class="btn btn-secondary">&larr; Back to Recorder</button>
-            </div>
         </div>
 
     </div>
 
     <script src="app.js"></script>
-    <script src="compare.js"></script>
     <script>
         (function() {
             const btn = document.getElementById('infoBtn');
