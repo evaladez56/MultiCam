@@ -30,6 +30,13 @@ class MultiCameraRecorder {
         this.wavRecorder = null;
         this.wavBuffers = [];
         this.wavSampleRate = 48000;
+        this.activeCameraCount = 0;
+        this.availableCameras = [];
+        this.layoutStorageKey = 'multicam.cameraLayouts';
+        this.recordingSegment = 1;
+        this.hasReinitialized = false;
+        this.isReinitializing = false;
+        this.individualRecordersNeedRestart = false;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -55,7 +62,7 @@ class MultiCameraRecorder {
     }
 
     attachEventListeners() {
-        this.setupButton.addEventListener('click', () => this.setupCameras());
+        this.setupButton.addEventListener('click', () => this.onSetupButtonClick());
         this.startButton.addEventListener('click', () => this.startRecording());
         this.pauseButton.addEventListener('click', () => this.togglePauseRecording());
         this.stopButton.addEventListener('click', () => this.stopRecording());
@@ -76,6 +83,7 @@ class MultiCameraRecorder {
                 fullId: c.deviceId 
             })));
             
+            this.availableCameras = cameras;
             return cameras;
         } catch (error) {
             console.error('Error getting cameras:', error);
@@ -103,6 +111,81 @@ class MultiCameraRecorder {
         }
     }
 
+    deviceSignature(cameras) {
+        return cameras
+            .map(c => c.deviceId)
+            .filter(Boolean)
+            .sort()
+            .join('|');
+    }
+
+    layoutKey(cameras, cameraCount) {
+        return `${cameraCount}::${this.deviceSignature(cameras)}`;
+    }
+
+    readLayoutStore() {
+        try {
+            const raw = localStorage.getItem(this.layoutStorageKey);
+            const parsed = raw ? JSON.parse(raw) : {};
+            return (parsed && typeof parsed === 'object') ? parsed : {};
+        } catch (error) {
+            console.warn('Could not read saved camera layouts:', error);
+            return {};
+        }
+    }
+
+    writeLayoutStore(store) {
+        try {
+            localStorage.setItem(this.layoutStorageKey, JSON.stringify(store));
+        } catch (error) {
+            console.warn('Could not save camera layout:', error);
+        }
+    }
+
+    getSavedLayout(cameras, cameraCount) {
+        const saved = this.readLayoutStore()[this.layoutKey(cameras, cameraCount)];
+        
+        if (!Array.isArray(saved) || saved.length !== cameraCount) return null;
+        
+        // Only reuse the arrangement if every remembered device is still present.
+        const available = new Set(cameras.map(c => c.deviceId));
+        if (!saved.every(id => available.has(id))) return null;
+        
+        return saved;
+    }
+
+    saveCameraLayout(cameraCount) {
+        const cameras = this.availableCameras;
+        if (!cameras || cameras.length === 0) return;
+        
+        const ids = this.getCameraSelects(cameraCount).map(s => s.value);
+        if (ids.length !== cameraCount || ids.some(id => !id)) return;
+        
+        const store = this.readLayoutStore();
+        store[this.layoutKey(cameras, cameraCount)] = ids;
+        this.writeLayoutStore(store);
+    }
+
+    onSetupButtonClick() {
+        // While a recording is in progress this button re-initializes the cameras
+        // in place instead of starting a fresh cold setup.
+        if (this.isRecording) {
+            this.reinitializeCamerasWhilePaused();
+        } else {
+            this.setupCameras();
+        }
+    }
+
+    updateSetupButtonMode() {
+        if (this.isRecording) {
+            this.setupButton.textContent = 'Re-initialize Cameras';
+            this.setupButton.disabled = !this.isPaused || this.isReinitializing;
+        } else {
+            this.setupButton.textContent = 'Initialize Cameras';
+            this.setupButton.disabled = this.isReinitializing;
+        }
+    }
+
     async setupCameras() {
         this.setupButton.disabled = true;
         this.startButton.disabled = true;
@@ -115,61 +198,24 @@ class MultiCameraRecorder {
         
         if (cameras.length === 0) {
             this.updateStatus('No cameras found. Please connect a camera and try again.');
-            this.setupButton.disabled = false;
+            this.updateSetupButtonMode();
             return;
         }
 
-        this.updateStatus(`Found ${cameras.length} camera(s) and ${audioDevices.length} audio device(s). Setting up...`);
+        const savedLayout = this.getSavedLayout(cameras, cameraCount);
+        const restoredNote = savedLayout ? ' Restored your last arrangement.' : '';
+        this.updateStatus(`Found ${cameras.length} camera(s) and ${audioDevices.length} audio device(s). Setting up...${restoredNote}`);
         
-        this.createCameraSelectionUI(cameras, cameraCount, audioDevices);
+        this.createCameraSelectionUI(cameras, cameraCount, audioDevices, savedLayout);
         await this.initializeCameras(cameraCount);
-        this.setupButton.disabled = false;
+        this.updateSetupButtonMode();
     }
 
-    createCameraSelectionUI(cameras, cameraCount, audioDevices) {
+    createCameraSelectionUI(cameras, cameraCount, audioDevices, preferredIds = null) {
         this.audioToggles = [];
         this.cameraSelection.innerHTML = '';
         
-        const container = document.createElement('div');
-        container.className = 'camera-select-group';
-        
-        for (let i = 0; i < cameraCount; i++) {
-            const selectItem = document.createElement('div');
-            selectItem.className = 'camera-select-item';
-            
-            const label = document.createElement('label');
-            label.textContent = `Camera ${i + 1}:`;
-            
-            const select = document.createElement('select');
-            select.id = `camera-${i}`;
-            select.className = 'camera-select';
-            
-            cameras.forEach((camera, index) => {
-                const option = document.createElement('option');
-                option.value = camera.deviceId;
-                
-                const deviceIdSuffix = camera.deviceId.slice(-4);
-                const baseName = camera.label || `Camera ${index + 1}`;
-                option.textContent = `${baseName} (...${deviceIdSuffix})`;
-                
-                if (index === i % cameras.length) {
-                    option.selected = true;
-                }
-                select.appendChild(option);
-            });
-            
-            select.addEventListener('change', () => {
-                if (this.streams.length > 0) {
-                    this.initializeCameras(cameraCount);
-                }
-            });
-            
-            selectItem.appendChild(label);
-            selectItem.appendChild(select);
-            container.appendChild(selectItem);
-        }
-        
-        this.cameraSelection.appendChild(container);
+        this.cameraSelection.appendChild(this.buildCameraDropdowns(cameras, cameraCount, preferredIds));
         
         if (audioDevices.length > 0) {
             const audioSection = document.createElement('div');
@@ -210,6 +256,78 @@ class MultiCameraRecorder {
         }
     }
 
+    buildCameraDropdowns(cameras, cameraCount, preferredIds = null) {
+        const container = document.createElement('div');
+        container.className = 'camera-select-group';
+        
+        for (let i = 0; i < cameraCount; i++) {
+            const selectItem = document.createElement('div');
+            selectItem.className = 'camera-select-item';
+            
+            const label = document.createElement('label');
+            label.textContent = `Camera ${i + 1}:`;
+            
+            const select = document.createElement('select');
+            select.id = `camera-${i}`;
+            select.className = 'camera-select';
+            
+            const preferred = preferredIds ? preferredIds[i] : null;
+            const preferredAvailable = preferred && cameras.some(c => c.deviceId === preferred);
+            
+            cameras.forEach((camera, index) => {
+                const option = document.createElement('option');
+                option.value = camera.deviceId;
+                
+                const deviceIdSuffix = camera.deviceId.slice(-4);
+                const baseName = camera.label || `Camera ${index + 1}`;
+                option.textContent = `${baseName} (...${deviceIdSuffix})`;
+                
+                const isSelected = preferredAvailable
+                    ? camera.deviceId === preferred
+                    : index === i % cameras.length;
+                
+                if (isSelected) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+            
+            select.addEventListener('change', () => this.onCameraSelectChange(cameraCount));
+            
+            selectItem.appendChild(label);
+            selectItem.appendChild(select);
+            container.appendChild(selectItem);
+        }
+        
+        return container;
+    }
+
+    onCameraSelectChange(cameraCount) {
+        if (this.isRecording) {
+            // Rearranging mid-recording is only safe while paused.
+            if (this.isPaused) {
+                this.reinitializeCamerasWhilePaused();
+            }
+            return;
+        }
+        
+        if (this.streams.length > 0) {
+            this.initializeCameras(cameraCount);
+        }
+    }
+
+    refreshCameraDropdowns(cameras, cameraCount) {
+        const currentSelections = this.getCameraSelects(cameraCount).map(s => s.value);
+        const replacement = this.buildCameraDropdowns(cameras, cameraCount, currentSelections);
+        const existing = this.cameraSelection.querySelector('.camera-select-group');
+        
+        if (existing) {
+            existing.replaceWith(replacement);
+        } else {
+            this.cameraSelection.prepend(replacement);
+        }
+    }
+
     getCameraSelects(cameraCount) {
         return Array.from({ length: cameraCount }, (_, i) => document.getElementById(`camera-${i}`)).filter(Boolean);
     }
@@ -220,6 +338,36 @@ class MultiCameraRecorder {
         this.cleanup();
         this.updateStatus('Initializing cameras...');
         
+        await this.acquireCameraStreams(cameraCount);
+        
+        const audioPromises = this.audioToggles.map(async (toggle, index) => {
+            if (toggle.checked) {
+                try {
+                    const audioStream = await navigator.mediaDevices.getUserMedia({
+                        audio: { deviceId: { exact: toggle.value } },
+                        video: false
+                    });
+                    this.audioStreams.push(audioStream);
+                    console.log(`Initialized audio device ${index + 1}:`, audioStream.getAudioTracks()[0].label);
+                } catch (error) {
+                    console.error(`Error accessing audio device ${index + 1}:`, error);
+                }
+            }
+        });
+        
+        await Promise.all(audioPromises);
+        
+        console.log(`Total audio streams initialized: ${this.audioStreams.length}`);
+        
+        this.setupCanvas(cameraCount);
+        this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
+        this.startButton.disabled = false;
+        this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
+        this.startPreview();
+    }
+
+    async acquireCameraStreams(cameraCount) {
+        this.activeCameraCount = cameraCount;
         this.videoGrid.className = `video-grid grid-${cameraCount}`;
         
         for (let i = 0; i < cameraCount; i++) {
@@ -290,30 +438,7 @@ class MultiCameraRecorder {
             }
         }
         
-        const audioPromises = this.audioToggles.map(async (toggle, index) => {
-            if (toggle.checked) {
-                try {
-                    const audioStream = await navigator.mediaDevices.getUserMedia({
-                        audio: { deviceId: { exact: toggle.value } },
-                        video: false
-                    });
-                    this.audioStreams.push(audioStream);
-                    console.log(`Initialized audio device ${index + 1}:`, audioStream.getAudioTracks()[0].label);
-                } catch (error) {
-                    console.error(`Error accessing audio device ${index + 1}:`, error);
-                }
-            }
-        });
-        
-        await Promise.all(audioPromises);
-        
-        console.log(`Total audio streams initialized: ${this.audioStreams.length}`);
-        
-        this.setupCanvas(cameraCount);
-        this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
-        this.startButton.disabled = false;
-        this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
-        this.startPreview();
+        this.saveCameraLayout(cameraCount);
     }
 
     setupCanvas(cameraCount) {
@@ -495,6 +620,9 @@ class MultiCameraRecorder {
         this.totalPausedMs = 0;
         this.pausedAt = null;
         this.startTime = Date.now();
+        this.recordingSegment = 1;
+        this.hasReinitialized = false;
+        this.individualRecordersNeedRestart = false;
         
         this.drawVideoGrid();
         
@@ -522,7 +650,7 @@ class MultiCameraRecorder {
         
         this.individualCheckboxes.forEach((checkbox, index) => {
             if (checkbox.checked && this.streams[index]) {
-                this.startIndividualRecording(index);
+                this.startIndividualRecording(index, this.recordingSegment);
             }
         });
         
@@ -566,7 +694,8 @@ class MultiCameraRecorder {
             this.startButton.disabled = true;
             this.pauseButton.disabled = false;
             this.stopButton.disabled = false;
-            this.setupButton.disabled = true;
+            this.cameraCountSelect.disabled = true;
+            this.updateSetupButtonMode();
             this.recordingIndicator.classList.add('active');
             
             this.startTimer();
@@ -575,10 +704,11 @@ class MultiCameraRecorder {
             console.error('Error starting recording:', error);
             this.updateStatus('Error starting recording: ' + error.message);
             this.isRecording = false;
+            this.updateSetupButtonMode();
         }
     }
 
-    startIndividualRecording(index) {
+    startIndividualRecording(index, segment = 1) {
         const videoStream = this.streams[index];
         if (!videoStream) return;
         
@@ -609,6 +739,7 @@ class MultiCameraRecorder {
         try {
             const recorder = new MediaRecorder(combinedStream, options);
             const chunks = [];
+            const entry = { recorder, index, segment, includeWav: true };
             
             recorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
@@ -617,15 +748,15 @@ class MultiCameraRecorder {
             };
             
             recorder.onstop = () => {
-                this.saveIndividualRecording(chunks, index, recorder.mimeType);
+                this.saveIndividualRecording(chunks, index, recorder.mimeType, entry.segment, entry.includeWav);
             };
             
             recorder.start(100);
             
-            this.individualRecorders.push({ recorder, index });
+            this.individualRecorders.push(entry);
             this.individualChunks.push(chunks);
             
-            console.log(`Started individual recording for Camera ${index + 1}`);
+            console.log(`Started individual recording for Camera ${index + 1} (segment ${segment})`);
         } catch (error) {
             console.error(`Error starting individual recording for Camera ${index + 1}:`, error);
         }
@@ -664,9 +795,10 @@ class MultiCameraRecorder {
         this.pauseButton.disabled = true;
         this.pauseButton.textContent = 'Pause Recording';
         this.stopButton.disabled = true;
-        this.setupButton.disabled = false;
+        this.cameraCountSelect.disabled = false;
         this.recordingIndicator.classList.remove('active');
         this.isPaused = false;
+        this.updateSetupButtonMode();
         this.activeSplitTimer = null;
         this.splitTimerStartedAt = null;
         this.machineTimeMs = 0;
@@ -685,6 +817,7 @@ class MultiCameraRecorder {
             this.isPaused = true;
             this.pausedAt = Date.now();
             this.pauseButton.textContent = 'Resume Recording';
+            this.updateSetupButtonMode();
             this.recordingIndicator.classList.remove('active');
             this.stopTimer();
             if (this.activeSplitTimer) {
@@ -693,16 +826,32 @@ class MultiCameraRecorder {
                 else this.manualTimeMs += now - this.splitTimerStartedAt;
                 this.splitTimerStartedAt = null;
             }
-            this.updateStatus('Recording paused. Click Resume to continue.');
+            this.updateStatus('Recording paused. You can re-initialize or rearrange cameras, then click Resume.');
         } else {
+            if (this.isReinitializing) {
+                this.updateStatus('Still re-initializing cameras. Please wait before resuming.');
+                return;
+            }
+            
             this.totalPausedMs += Date.now() - this.pausedAt;
             this.pausedAt = null;
             this.mediaRecorder.resume();
             this.individualRecorders.forEach(({ recorder }) => {
                 if (recorder && recorder.state === 'paused') recorder.resume();
             });
+            
+            if (this.individualRecordersNeedRestart) {
+                this.individualRecordersNeedRestart = false;
+                this.individualCheckboxes.forEach((checkbox, index) => {
+                    if (checkbox.checked && this.streams[index]) {
+                        this.startIndividualRecording(index, this.recordingSegment);
+                    }
+                });
+            }
+            
             this.isPaused = false;
             this.pauseButton.textContent = 'Pause Recording';
+            this.updateSetupButtonMode();
             this.recordingIndicator.classList.add('active');
             if (this.activeSplitTimer) {
                 this.splitTimerStartedAt = Date.now();
@@ -711,6 +860,78 @@ class MultiCameraRecorder {
             this.startTimer();
             this.updateStatus('Recording in progress...');
         }
+    }
+
+    async reinitializeCamerasWhilePaused() {
+        if (!this.isRecording || !this.isPaused) {
+            this.updateStatus('Pause the recording before re-initializing cameras.');
+            return;
+        }
+        
+        if (this.isReinitializing) return;
+        this.isReinitializing = true;
+        
+        const cameraCount = this.activeCameraCount;
+        
+        this.getCameraSelects(cameraCount).forEach(s => s.disabled = true);
+        this.pauseButton.disabled = true;
+        this.stopButton.disabled = true;
+        this.updateSetupButtonMode();
+        this.updateStatus('Re-initializing cameras... the recording stays paused.');
+        
+        // Preserve which cameras were flagged for separate recording.
+        const separateFlags = this.individualCheckboxes.map(cb => cb.checked);
+        
+        // Per-camera recorders are bound to the raw camera tracks we are about to
+        // stop, so close them out as a segment. Fresh ones start on resume.
+        if (this.individualRecorders.length > 0) {
+            this.hasReinitialized = true;
+            this.individualRecorders.forEach(entry => {
+                entry.includeWav = false;
+                if (entry.recorder && entry.recorder.state !== 'inactive') {
+                    entry.recorder.stop();
+                }
+            });
+        }
+        this.individualRecorders = [];
+        this.individualChunks = [];
+        this.recordingSegment++;
+        this.individualRecordersNeedRestart = true;
+        
+        // Video only — the audio graph feeding the active MediaRecorder must survive.
+        this.stopVideoStreams();
+        
+        const cameras = await this.getAvailableCameras();
+        
+        if (cameras.length === 0) {
+            this.updateStatus('No cameras found. Reconnect a camera, then click Re-initialize Cameras again.');
+            this.finishReinitialize(cameraCount);
+            return;
+        }
+        
+        this.refreshCameraDropdowns(cameras, cameraCount);
+        
+        // The canvas is left untouched, so the in-progress recording continues
+        // into the same file once resumed.
+        await this.acquireCameraStreams(cameraCount);
+        
+        this.individualCheckboxes.forEach((checkbox, index) => {
+            if (separateFlags[index] !== undefined) {
+                checkbox.checked = separateFlags[index];
+            }
+        });
+        
+        const liveCount = this.streams.length;
+        this.updateStatus(`Cameras re-initialized (${liveCount}/${cameraCount} live). Rearrange if needed, then click Resume Recording.`);
+        this.finishReinitialize(cameraCount);
+    }
+
+    finishReinitialize(cameraCount) {
+        this.isReinitializing = false;
+        this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
+        this.pauseButton.disabled = false;
+        this.stopButton.disabled = false;
+        this.updateSetupButtonMode();
     }
 
     drawResumeOverlay(ctx, canvasWidth, canvasHeight) {
@@ -857,7 +1078,7 @@ class MultiCameraRecorder {
         this.recordedChunks = [];
     }
 
-    saveIndividualRecording(chunks, cameraIndex, mimeType) {
+    saveIndividualRecording(chunks, cameraIndex, mimeType, segment = null, includeWav = true) {
         if (chunks.length === 0) {
             console.warn(`No data for individual camera ${cameraIndex + 1}`);
             return;
@@ -871,13 +1092,14 @@ class MultiCameraRecorder {
         const year = now.getFullYear();
         
         const prefix = this.filenamePrefixInput.value.trim();
-        const baseFilename = `camera${cameraIndex + 1}_${month}_${day}_${year}`;
+        const partSuffix = (segment && this.hasReinitialized) ? `_part${segment}` : '';
+        const baseFilename = `camera${cameraIndex + 1}_${month}_${day}_${year}${partSuffix}`;
         const filename = prefix ? `${prefix}_${baseFilename}` : baseFilename;
         
         const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
         this.downloadBlob(blob, `${filename}.${extension}`);
         
-        if (this.wavBuffers.length > 0) {
+        if (includeWav && this.wavBuffers.length > 0) {
             const wavBlob = this.encodeWav();
             this.downloadBlob(wavBlob, `${filename}_audio.wav`);
             console.log(`Camera ${cameraIndex + 1} saved: ${filename}.${extension} + ${filename}_audio.wav`);
@@ -1023,14 +1245,18 @@ class MultiCameraRecorder {
         this.statusText.textContent = message;
     }
 
-    cleanup() {
-        this.isPreviewing = false;
-        
+    stopVideoStreams() {
         this.streams.forEach(stream => {
             stream.getTracks().forEach(track => track.stop());
         });
         this.streams = [];
         
+        this.videoElements = [];
+        this.individualCheckboxes = [];
+        this.videoGrid.innerHTML = '';
+    }
+
+    stopAudioStreams() {
         this.audioStreams.forEach(stream => {
             stream.getTracks().forEach(track => track.stop());
         });
@@ -1041,11 +1267,17 @@ class MultiCameraRecorder {
             this.audioContext = null;
         }
         
-        this.videoElements = [];
-        this.individualCheckboxes = [];
+        this.mixedAudioTrack = null;
+    }
+
+    cleanup() {
+        this.isPreviewing = false;
+        
+        this.stopVideoStreams();
+        this.stopAudioStreams();
+        
         this.individualRecorders = [];
         this.individualChunks = [];
-        this.videoGrid.innerHTML = '';
         
         if (this.animationFrameId) {
             cancelAnimationFrame(this.animationFrameId);
