@@ -68,12 +68,60 @@ class MultiCameraRecorder {
         this.stopButton.addEventListener('click', () => this.stopRecording());
         this.machineTimeBtn.addEventListener('click', () => this.toggleSplitTimer('machine'));
         this.manualTimeBtn.addEventListener('click', () => this.toggleSplitTimer('manual'));
+        if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+            navigator.mediaDevices.addEventListener('devicechange', () => this.refreshDetectedCameraCount());
+        }
+        this.toggleSelectionBtn = document.getElementById('toggleSelection');
+        this.toggleSelectionBtn.addEventListener('click', () => this.toggleSelectionSection());
+    }
+
+    toggleSelectionSection() {
+        const collapsed = this.cameraSelection.classList.toggle('collapsed');
+        this.toggleSelectionBtn.setAttribute('aria-expanded', String(!collapsed));
+        this.toggleSelectionBtn.innerHTML = collapsed
+            ? '&#9654; Show Camera &amp; Audio Selection'
+            : '&#9660; Hide Camera &amp; Audio Selection';
+    }
+
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    describeMediaError(error) {
+        const name = error && error.name;
+        const reasons = {
+            NotAllowedError: 'permission denied (check the browser and Windows camera privacy settings)',
+            SecurityError: 'blocked for security reasons (use https:// or http://localhost)',
+            NotFoundError: 'camera not found (unplugged or no power?)',
+            NotReadableError: 'camera is in use by another app, or has a USB power/bandwidth problem',
+            AbortError: 'camera failed to start (driver or USB problem)',
+            OverconstrainedError: 'camera does not support the requested settings',
+            TypeError: 'invalid camera request'
+        };
+        return reasons[name] || (error && error.message) || 'unknown error';
+    }
+
+    async probePermission(constraints) {
+        const probe = await navigator.mediaDevices.getUserMedia(constraints);
+        probe.getTracks().forEach(track => track.stop());
+        await this.delay(200);
     }
 
     async getAvailableCameras() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            this.updateStatus('Camera access is unavailable. Open this page via https:// or http://localhost in Chrome or Edge.');
+            return [];
+        }
+        
+        let probeError = null;
         try {
-            await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            
+            await this.probePermission({ video: true, audio: false });
+        } catch (error) {
+            probeError = error;
+            console.warn('Camera permission probe failed:', error);
+        }
+        
+        try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const cameras = devices.filter(device => device.kind === 'videoinput');
             
@@ -83,18 +131,23 @@ class MultiCameraRecorder {
                 fullId: c.deviceId 
             })));
             
+            if (probeError && (probeError.name === 'NotAllowedError' || probeError.name === 'SecurityError' || cameras.length === 0)) {
+                this.updateStatus(`Error accessing cameras: ${this.describeMediaError(probeError)}.`);
+                return [];
+            }
+            
             this.availableCameras = cameras;
             return cameras;
         } catch (error) {
             console.error('Error getting cameras:', error);
-            this.updateStatus('Error accessing cameras. Please grant camera permissions.');
+            this.updateStatus(`Error accessing cameras: ${this.describeMediaError(error)}.`);
             return [];
         }
     }
 
     async getAvailableAudioDevices() {
         try {
-            await navigator.mediaDevices.getUserMedia({ audio: true });
+            await this.probePermission({ audio: true });
             
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioDevices = devices.filter(device => device.kind === 'audioinput');
@@ -215,6 +268,12 @@ class MultiCameraRecorder {
         this.audioToggles = [];
         this.cameraSelection.innerHTML = '';
         
+        const counter = document.createElement('div');
+        counter.id = 'cameraCounter';
+        counter.className = 'camera-counter';
+        this.cameraSelection.appendChild(counter);
+        this.updateCameraCounter();
+        
         this.cameraSelection.appendChild(this.buildCameraDropdowns(cameras, cameraCount, preferredIds));
         
         if (audioDevices.length > 0) {
@@ -280,7 +339,11 @@ class MultiCameraRecorder {
                 
                 const deviceIdSuffix = camera.deviceId.slice(-4);
                 const baseName = camera.label || `Camera ${index + 1}`;
-                option.textContent = `${baseName} (...${deviceIdSuffix})`;
+                const sameName = cameras.filter(c => (c.label || '') === (camera.label || ''));
+                const prefix = camera.label && sameName.length > 1
+                    ? `${this.toBoldDigits(sameName.indexOf(camera) + 1)} `
+                    : '';
+                option.textContent = `${prefix}${baseName} (...${deviceIdSuffix})`;
                 
                 const isSelected = preferredAvailable
                     ? camera.deviceId === preferred
@@ -359,11 +422,114 @@ class MultiCameraRecorder {
         
         console.log(`Total audio streams initialized: ${this.audioStreams.length}`);
         
+        this.toggleSelectionBtn.classList.add('visible');
         this.setupCanvas(cameraCount);
         this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
         this.startButton.disabled = false;
         this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
         this.startPreview();
+    }
+
+    toBoldDigits(n) {
+        return String(n).replace(/\d/g, d => String.fromCodePoint(0x1D7CE + Number(d)));
+    }
+
+    updateCameraCounter(count = (this.availableCameras || []).length) {
+        const el = document.getElementById('cameraCounter');
+        if (el) el.textContent = `Cameras detected: ${count}`;
+    }
+
+    setCameraStatus(select, status, detail = '') {
+        if (!select) return;
+        select.classList.remove('camera-status-pending', 'camera-status-ready', 'camera-status-error', 'camera-status-blank');
+        select.classList.add(`camera-status-${status}`);
+        select.title = detail;
+    }
+
+    buildVideoConstraintTiers(deviceId, cameraCount) {
+        const device = deviceId ? { deviceId: { exact: deviceId } } : {};
+        const lowBandwidth = cameraCount >= 6;
+        return [
+            { ...device, width: { ideal: lowBandwidth ? 640 : 1280 }, height: { ideal: lowBandwidth ? 480 : 720 }, frameRate: { ideal: 30 } },
+            { ...device, width: { ideal: 640 }, height: { ideal: 480 } },
+            { ...device }
+        ];
+    }
+
+    async openCameraWithFallback(deviceId, cameraCount) {
+        const tiers = this.buildVideoConstraintTiers(deviceId, cameraCount);
+        let lastError = null;
+        
+        for (let attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0) await this.delay(700);
+            for (const video of tiers) {
+                try {
+                    return await navigator.mediaDevices.getUserMedia({ video, audio: false });
+                } catch (error) {
+                    lastError = error;
+                    console.warn('Camera open attempt failed:', error.name, video);
+                    if (error.name === 'NotAllowedError' || error.name === 'SecurityError') throw error;
+                }
+            }
+        }
+        throw lastError;
+    }
+
+    async verifyVideoHasPicture(video, select, cameraNumber) {
+        const sample = document.createElement('canvas');
+        sample.width = sample.height = 16;
+        const sctx = sample.getContext('2d', { willReadFrequently: true });
+        
+        let brightest = 0;
+        let lastReadyState = 0;
+        for (let attempt = 0; attempt < 8; attempt++) {
+            await this.delay(500);
+            if (!video.isConnected || !this.videoElements.includes(video)) return;
+            
+            lastReadyState = video.readyState;
+            if (video.readyState >= 2 && video.videoWidth > 0) {
+                sctx.drawImage(video, 0, 0, 16, 16);
+                const data = sctx.getImageData(0, 0, 16, 16).data;
+                let min = 765;
+                let max = 0;
+                for (let p = 0; p < data.length; p += 4) {
+                    const sum = data[p] + data[p + 1] + data[p + 2];
+                    min = Math.min(min, sum);
+                    max = Math.max(max, sum);
+                }
+                brightest = Math.max(brightest, max);
+                if (max > 6 || max - min > 3) {
+                    this.setCameraStatus(select, 'ready', 'Camera is on and sending a picture.');
+                    return;
+                }
+            }
+        }
+        console.warn(`Camera ${cameraNumber} flagged blank: brightest=${brightest}, readyState=${lastReadyState}, size=${video.videoWidth}x${video.videoHeight}`);
+        
+        const detail = 'Camera opened but is sending a black or empty picture (lens covered, USB power/bandwidth issue, or driver problem).';
+        this.setCameraStatus(select, 'blank', detail);
+        this.updateStatus(`Camera ${cameraNumber}: ${detail}`);
+    }
+
+    handleCameraTrackEnded(select, cameraNumber) {
+        if (!this.streams.length) return;
+        const detail = 'Camera disconnected or stopped sending video.';
+        this.setCameraStatus(select, 'error', detail);
+        this.updateStatus(`Camera ${cameraNumber}: ${detail} Reconnect it, then re-initialize.`);
+    }
+
+    async refreshDetectedCameraCount() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const count = devices.filter(d => d.kind === 'videoinput').length;
+            this.updateCameraCounter(count);
+            if (this.streams.length > 0) {
+                this.updateStatus(`Camera list changed (${count} detected). Re-initialize cameras to pick up changes.`);
+            }
+        } catch (error) {
+            console.warn('Could not refresh camera count:', error);
+        }
     }
 
     async acquireCameraStreams(cameraCount) {
@@ -373,19 +539,14 @@ class MultiCameraRecorder {
         for (let i = 0; i < cameraCount; i++) {
             const select = document.getElementById(`camera-${i}`);
             const deviceId = select ? select.value : undefined;
+            this.setCameraStatus(select, 'pending', 'Opening camera...');
+            if (i > 0) await this.delay(300);
             
             try {
-                const constraints = {
-                    video: {
-                        deviceId: deviceId ? { exact: deviceId } : undefined,
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: false
-                };
-                
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const stream = await this.openCameraWithFallback(deviceId, cameraCount);
                 this.streams.push(stream);
+                const cameraNumber = i + 1;
+                stream.getVideoTracks()[0].addEventListener('ended', () => this.handleCameraTrackEnded(select, cameraNumber));
                 
                 const videoContainer = document.createElement('div');
                 videoContainer.className = 'video-container';
@@ -425,10 +586,14 @@ class MultiCameraRecorder {
                 
                 this.videoElements.push(video);
                 this.individualCheckboxes.push(checkbox);
+                this.setCameraStatus(select, 'pending', 'Camera opened. Checking for a picture...');
+                this.verifyVideoHasPicture(video, select, cameraNumber);
                 
             } catch (error) {
                 console.error(`Error accessing camera ${i + 1}:`, error);
-                this.updateStatus(`Error accessing camera ${i + 1}. Using placeholder.`);
+                const reason = this.describeMediaError(error);
+                this.setCameraStatus(select, 'error', reason);
+                this.updateStatus(`Error accessing camera ${i + 1}: ${reason}.`);
                 
                 const videoContainer = document.createElement('div');
                 videoContainer.className = 'video-container';
