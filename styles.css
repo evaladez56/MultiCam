@@ -609,6 +609,23 @@ input[type="text"]:focus {
     font-weight: 600;
 }
 
+.video-offline {
+    display: none;
+    position: absolute;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    text-align: center;
+    background: var(--black);
+    color: var(--white);
+    font-weight: 600;
+}
+
+.video-container.disconnected .video-offline {
+    display: flex;
+}
+
 .individual-record-checkbox {
     position: absolute;
     bottom: 10px;

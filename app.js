@@ -4,6 +4,10 @@ class MultiCameraRecorder {
         this.videoElements = [];
         this.audioStreams = [];
         this.audioToggles = [];
+        this.cameraSlots = [];
+        this.disconnectedVideos = new Set();
+        this.reconnectTimer = null;
+        this.reconnectBusy = false;
         this.mediaRecorder = null;
         this.recordedChunks = [];
         this.individualRecorders = [];
@@ -650,11 +654,114 @@ class MultiCameraRecorder {
         this.updateStatus(`Camera ${cameraNumber}: ${detail}`);
     }
 
-    handleCameraTrackEnded(select, cameraNumber) {
-        if (!this.streams.length) return;
+    watchCameraTrack(slot) {
+        const stream = slot.stream;
+        stream.getVideoTracks()[0].addEventListener('ended', () => this.handleCameraTrackEnded(slot, stream));
+    }
+
+    handleCameraTrackEnded(slot, stream) {
+        if (slot.stream !== stream || !this.streams.includes(stream)) return;
+        
         const detail = 'Camera disconnected or stopped sending video.';
-        this.setCameraStatus(select, 'error', detail);
-        this.updateStatus(`Camera ${cameraNumber}: ${detail} Reconnect it, then re-initialize.`);
+        this.setCameraStatus(slot.select, 'error', detail);
+        
+        if (!this.isRecording) {
+            this.updateStatus(`Camera ${slot.number}: ${detail} Reconnect it, then re-initialize.`);
+            return;
+        }
+        
+        this.disconnectedVideos.add(slot.video);
+        slot.container.classList.add('disconnected');
+        
+        const index = this.videoElements.indexOf(slot.video);
+        const entry = this.individualRecorders.find(e => e.index === index && e.recorder && e.recorder.state !== 'inactive');
+        if (entry) {
+            slot.nextSegment = entry.segment + 1;
+            this.hasReinitialized = true;
+            entry.recorder.stop();
+        }
+        
+        this.updateStatus(`Camera ${slot.number} disconnected. Recording continues; plug it back in and it will reconnect automatically.`);
+        this.startReconnectWatch();
+    }
+
+    startReconnectWatch() {
+        if (this.reconnectTimer) return;
+        this.reconnectTimer = setInterval(() => this.tryReconnectCameras(), 2000);
+    }
+
+    stopReconnectWatch() {
+        if (this.reconnectTimer) clearInterval(this.reconnectTimer);
+        this.reconnectTimer = null;
+    }
+
+    async tryReconnectCameras() {
+        if (this.reconnectBusy) return;
+        
+        const pending = this.cameraSlots.filter(slot => this.disconnectedVideos.has(slot.video));
+        if (pending.length === 0) {
+            this.stopReconnectWatch();
+            return;
+        }
+        
+        this.reconnectBusy = true;
+        try {
+            const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+            
+            for (const slot of pending) {
+                if (!this.disconnectedVideos.has(slot.video)) continue;
+                const inUse = new Set(this.cameraSlots.filter(s => !this.disconnectedVideos.has(s.video)).map(s => s.deviceId));
+                const match = devices.find(d => d.deviceId === slot.deviceId) ||
+                    devices.find(d => slot.trackLabel && d.label === slot.trackLabel && !inUse.has(d.deviceId));
+                if (!match) continue;
+                
+                try {
+                    await this.reconnectSlot(slot, match.deviceId);
+                } catch (error) {
+                    console.warn(`Camera ${slot.number} reconnect attempt failed:`, error);
+                }
+            }
+        } catch (error) {
+            console.warn('Could not check for reconnected cameras:', error);
+        } finally {
+            this.reconnectBusy = false;
+        }
+    }
+
+    async reconnectSlot(slot, deviceId) {
+        const stream = await this.openCameraWithFallback(deviceId, this.activeCameraCount);
+        
+        if (!this.disconnectedVideos.has(slot.video) || !this.cameraSlots.includes(slot)) {
+            stream.getTracks().forEach(track => track.stop());
+            return;
+        }
+        
+        const index = this.videoElements.indexOf(slot.video);
+        slot.stream = stream;
+        slot.deviceId = deviceId;
+        slot.trackLabel = stream.getVideoTracks()[0].label || slot.trackLabel;
+        this.streams[index] = stream;
+        slot.video.srcObject = stream;
+        this.watchCameraTrack(slot);
+        
+        if (Array.from(slot.select.options).some(o => o.value === deviceId)) slot.select.value = deviceId;
+        
+        this.disconnectedVideos.delete(slot.video);
+        slot.container.classList.remove('disconnected');
+        this.setCameraStatus(slot.select, 'pending', 'Camera reconnected. Checking for a picture...');
+        this.verifyVideoHasPicture(slot.video, slot.select, slot.number);
+        
+        const checkbox = this.individualCheckboxes[index];
+        if (this.isRecording && checkbox && checkbox.checked && slot.nextSegment) {
+            this.startIndividualRecording(index, slot.nextSegment);
+            if (this.isPaused) {
+                const entry = this.individualRecorders[this.individualRecorders.length - 1];
+                if (entry && entry.recorder.state === 'recording') entry.recorder.pause();
+            }
+        }
+        slot.nextSegment = null;
+        
+        this.updateStatus(this.isRecording ? `Camera ${slot.number} reconnected. Recording continues.` : `Camera ${slot.number} reconnected.`);
     }
 
     async refreshDetectedCameraCount() {
@@ -663,7 +770,9 @@ class MultiCameraRecorder {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const count = devices.filter(d => d.kind === 'videoinput').length;
             this.updateCameraCounter(count);
-            if (this.streams.length > 0) {
+            if (this.disconnectedVideos.size > 0) {
+                this.tryReconnectCameras();
+            } else if (this.streams.length > 0) {
                 this.updateStatus(`Camera list changed (${count} detected). Re-initialize cameras to pick up changes.`);
             }
         } catch (error) {
@@ -685,7 +794,6 @@ class MultiCameraRecorder {
                 const stream = await this.openCameraWithFallback(deviceId, cameraCount);
                 this.streams.push(stream);
                 const cameraNumber = i + 1;
-                stream.getVideoTracks()[0].addEventListener('ended', () => this.handleCameraTrackEnded(select, cameraNumber));
                 
                 const videoContainer = document.createElement('div');
                 videoContainer.className = 'video-container';
@@ -721,10 +829,20 @@ class MultiCameraRecorder {
                 videoContainer.appendChild(video);
                 videoContainer.appendChild(label);
                 videoContainer.appendChild(checkboxContainer);
+                
+                const offline = document.createElement('div');
+                offline.className = 'video-offline';
+                offline.textContent = `Camera ${cameraNumber} disconnected. Waiting for it to reconnect...`;
+                videoContainer.appendChild(offline);
+                
                 this.videoGrid.appendChild(videoContainer);
                 
                 this.videoElements.push(video);
                 this.individualCheckboxes.push(checkbox);
+                
+                const slot = { video, stream, select, container: videoContainer, number: cameraNumber, deviceId, trackLabel: stream.getVideoTracks()[0].label, nextSegment: null };
+                this.cameraSlots.push(slot);
+                this.watchCameraTrack(slot);
                 this.setCameraStatus(select, 'pending', 'Camera opened. Checking for a picture...');
                 this.verifyVideoHasPicture(video, select, cameraNumber);
                 
@@ -809,6 +927,10 @@ class MultiCameraRecorder {
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
         this.videoElements.forEach((video, index) => {
+            if (this.disconnectedVideos.has(video)) {
+                this.drawOfflineCell(index);
+                return;
+            }
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
                 const col = index % this.gridLayout.cols;
                 const row = Math.floor(index / this.gridLayout.cols);
@@ -862,6 +984,27 @@ class MultiCameraRecorder {
         this.drawResumeOverlay(this.ctx, this.canvas.width, this.canvas.height);
         
         this.animationFrameId = requestAnimationFrame(() => this.drawVideoGrid());
+    }
+
+    drawOfflineCell(index) {
+        const { cols, cellWidth, cellHeight } = this.gridLayout;
+        const x = (index % cols) * cellWidth;
+        const y = Math.floor(index / cols) * cellHeight;
+        const scale = this.canvas.width / 1920;
+        const ctx = this.ctx;
+        
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(x, y, cellWidth, cellHeight);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `bold ${28 * scale}px Arial`;
+        ctx.fillText(`Camera ${index + 1} disconnected`, x + cellWidth / 2, y + cellHeight / 2 - 16 * scale);
+        ctx.font = `${18 * scale}px Arial`;
+        ctx.fillText('Waiting for reconnect...', x + cellWidth / 2, y + cellHeight / 2 + 20 * scale);
+        ctx.textAlign = 'start';
+        
+        this.drawCameraLabel(ctx, `Camera ${index + 1}`, x, y, this.canvas.width);
     }
 
     drawCameraLabel(ctx, label, x, y, canvasWidth) {
@@ -1550,6 +1693,9 @@ class MultiCameraRecorder {
     }
 
     stopVideoStreams() {
+        this.stopReconnectWatch();
+        this.cameraSlots = [];
+        this.disconnectedVideos.clear();
         this.streams.forEach(stream => {
             stream.getTracks().forEach(track => track.stop());
         });
