@@ -469,9 +469,15 @@ input[type="text"]:focus {
 }
 
 .audio-select-group {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.audio-meter {
+    width: 160px;
+    height: 24px;
+    flex: none;
 }
 
 .audio-select-item {

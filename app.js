@@ -95,7 +95,7 @@ class MultiCameraRecorder {
             NotFoundError: 'camera not found (unplugged or no power?)',
             NotReadableError: 'camera is in use by another app, or has a USB power/bandwidth problem',
             AbortError: 'camera failed to start (driver or USB problem)',
-            OverconstrainedError: 'camera does not support the requested settings',
+            OverconstrainedError: 'device not available under that ID or does not support the requested settings',
             TypeError: 'invalid camera request'
         };
         return reasons[name] || (error && error.message) || 'unknown error';
@@ -230,6 +230,10 @@ class MultiCameraRecorder {
     }
 
     updateSetupButtonMode() {
+        this.audioToggles.forEach(toggle => {
+            toggle.disabled = this.isRecording;
+            toggle.title = this.isRecording ? 'Audio inputs are locked while recording.' : '';
+        });
         if (this.isRecording) {
             this.setupButton.textContent = 'Re-initialize Cameras';
             this.setupButton.disabled = !this.isPaused || this.isReinitializing;
@@ -303,11 +307,27 @@ class MultiCameraRecorder {
                 const deviceName = device.label || `Audio Device ${index + 1}`;
                 label.textContent = `${deviceName} (...${deviceIdSuffix})`;
                 
+                const meter = document.createElement('canvas');
+                meter.className = 'audio-meter';
+                meter.width = 160;
+                meter.height = 24;
+                this.drawAudioMeter(meter, null);
+                
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        this.startAudioMeter(checkbox, meter);
+                    } else {
+                        this.removeAudioDevice(checkbox);
+                    }
+                });
+                
                 audioItem.appendChild(checkbox);
                 audioItem.appendChild(label);
+                audioItem.appendChild(meter);
                 audioContainer.appendChild(audioItem);
                 
                 this.audioToggles.push(checkbox);
+                checkbox.meterCanvas = meter;
             });
             
             audioSection.appendChild(audioContainer);
@@ -406,10 +426,7 @@ class MultiCameraRecorder {
         const audioPromises = this.audioToggles.map(async (toggle, index) => {
             if (toggle.checked) {
                 try {
-                    const audioStream = await navigator.mediaDevices.getUserMedia({
-                        audio: { deviceId: { exact: toggle.value } },
-                        video: false
-                    });
+                    const audioStream = await this.openAudioDevice(toggle.value);
                     this.audioStreams.push(audioStream);
                     console.log(`Initialized audio device ${index + 1}:`, audioStream.getAudioTracks()[0].label);
                 } catch (error) {
@@ -422,12 +439,134 @@ class MultiCameraRecorder {
         
         console.log(`Total audio streams initialized: ${this.audioStreams.length}`);
         
+        this.audioToggles.forEach(toggle => {
+            if (toggle.checked) this.startAudioMeter(toggle, toggle.meterCanvas);
+        });
+        
         this.toggleSelectionBtn.classList.add('visible');
         this.setupCanvas(cameraCount);
         this.updateStatus('Cameras ready! Click "Start Recording" to begin.');
         this.startButton.disabled = false;
         this.getCameraSelects(cameraCount).forEach(s => s.disabled = false);
         this.startPreview();
+    }
+
+    drawAudioMeter(canvas, levels) {
+        const ctx = canvas.getContext('2d');
+        const bars = 16;
+        const gap = 2;
+        const barWidth = (canvas.width - gap * (bars - 1)) / bars;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        for (let i = 0; i < bars; i++) {
+            const level = levels ? levels[i] : 0;
+            const h = Math.max(2, level * canvas.height);
+            ctx.fillStyle = level > 0.02 ? '#3D4DFF' : '#BCBDC2';
+            ctx.fillRect(i * (barWidth + gap), (canvas.height - h) / 2, barWidth, h);
+        }
+    }
+
+    async startAudioMeter(checkbox, canvas) {
+        this.stopAudioMeter(checkbox);
+        if (!canvas) return;
+        
+        if (!this.audioMeters) this.audioMeters = new Map();
+        const entry = { cancelled: false, context: null, raf: null, canvas };
+        this.audioMeters.set(checkbox, entry);
+        
+        try {
+            let stream = this.findAudioStream(checkbox.value);
+            
+            if (!stream) {
+                stream = await this.openAudioDevice(checkbox.value);
+                
+                const openedId = stream.getAudioTracks()[0].getSettings().deviceId;
+                const duplicate = this.audioStreams.some(s => s.getAudioTracks()[0].getSettings().deviceId === openedId);
+                if (entry.cancelled || duplicate) {
+                    stream.getTracks().forEach(t => t.stop());
+                    if (duplicate) throw new Error('this input is the same device as one already selected');
+                    return;
+                }
+                this.audioStreams.push(stream);
+            }
+            
+            const context = new AudioContext();
+            const analyser = context.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.7;
+            context.createMediaStreamSource(stream).connect(analyser);
+            entry.context = context;
+            
+            const bins = new Uint8Array(analyser.frequencyBinCount);
+            const bars = 16;
+            const usable = Math.floor(bins.length * 0.75);
+            const perBar = Math.max(1, Math.floor(usable / bars));
+            
+            const tick = () => {
+                if (entry.cancelled) return;
+                analyser.getByteFrequencyData(bins);
+                const levels = [];
+                for (let b = 0; b < bars; b++) {
+                    let sum = 0;
+                    for (let k = 0; k < perBar; k++) sum += bins[b * perBar + k];
+                    levels.push(Math.min(1, (sum / perBar / 255) * 1.6));
+                }
+                this.drawAudioMeter(canvas, levels);
+                entry.raf = requestAnimationFrame(tick);
+            };
+            tick();
+        } catch (error) {
+            console.error('Could not start audio meter:', error);
+            this.audioMeters.delete(checkbox);
+            this.drawAudioMeter(canvas, null);
+            checkbox.checked = false;
+            this.updateStatus(`Could not open audio device: ${this.describeMediaError(error)}.`);
+        }
+    }
+
+    async openAudioDevice(deviceId) {
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } }, video: false });
+        } catch (error) {
+            if (error.name !== 'OverconstrainedError' && error.name !== 'NotFoundError') throw error;
+            console.warn('Exact audio device ID rejected, retrying with a preferred ID:', error);
+            stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { ideal: deviceId } }, video: false });
+        }
+        stream.requestedDeviceId = deviceId;
+        return stream;
+    }
+
+    findAudioStream(deviceId) {
+        return this.audioStreams.find(s => {
+            const track = s.getAudioTracks()[0];
+            return track && track.readyState === 'live' &&
+                (s.requestedDeviceId === deviceId || track.getSettings().deviceId === deviceId);
+        });
+    }
+
+    removeAudioDevice(checkbox) {
+        this.stopAudioMeter(checkbox);
+        const stream = this.findAudioStream(checkbox.value);
+        if (!stream) return;
+        stream.getTracks().forEach(t => t.stop());
+        this.audioStreams = this.audioStreams.filter(s => s !== stream);
+    }
+
+    stopAudioMeter(checkbox) {
+        const entry = this.audioMeters && this.audioMeters.get(checkbox);
+        if (!entry) return;
+        
+        entry.cancelled = true;
+        if (entry.raf) cancelAnimationFrame(entry.raf);
+        if (entry.context) entry.context.close();
+        this.audioMeters.delete(checkbox);
+        this.drawAudioMeter(entry.canvas, null);
+    }
+
+    stopAllAudioMeters() {
+        if (!this.audioMeters) return;
+        Array.from(this.audioMeters.keys()).forEach(checkbox => this.stopAudioMeter(checkbox));
     }
 
     toBoldDigits(n) {
@@ -1422,6 +1561,7 @@ class MultiCameraRecorder {
     }
 
     stopAudioStreams() {
+        this.stopAllAudioMeters();
         this.audioStreams.forEach(stream => {
             stream.getTracks().forEach(track => track.stop());
         });
